@@ -206,6 +206,26 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("what to remind", result["error"])
         create_task.assert_not_called()
 
+    def test_execute_tool_call_clears_active_reminders(self):
+        with patch("src.tools.manage_tasks.tasks.clear_active_tasks", return_value=15):
+            result = chat.execute_tool_call("manage_reminders", '{"action":"clear"}')
+
+        self.assertEqual(result, {"ok": True, "cleared_count": 15})
+
+    def test_execute_tool_call_removes_selected_reminders(self):
+        with patch("src.tools.manage_tasks.tasks.complete_tasks", return_value=2):
+            result = chat.execute_tool_call(
+                "manage_reminders", '{"action":"remove","task_ids":[3,4]}'
+            )
+
+        self.assertEqual(result, {"ok": True, "removed_count": 2})
+
+    def test_execute_tool_call_rejects_reminder_update_without_changes(self):
+        result = chat.execute_tool_call("manage_reminders", '{"action":"update","task_id":3}')
+
+        self.assertFalse(result["ok"])
+        self.assertIn("Specify", result["error"])
+
     async def test_agent_loop_returns_final_response_after_tool_result(self):
         tool_call = SimpleNamespace(
             id="call_1",

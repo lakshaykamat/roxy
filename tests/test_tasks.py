@@ -67,6 +67,45 @@ class TaskTests(unittest.TestCase):
         self.assertFalse(tasks.complete_task(task.id))
         self.assertEqual(tasks.list_active_tasks(), [])
 
+    def test_clear_active_tasks_cancels_all_pending_reminders(self):
+        self.create_task()
+        self.create_task("daily")
+
+        self.assertEqual(tasks.clear_active_tasks(), 2)
+        self.assertEqual(tasks.list_active_tasks(), [])
+        with tasks.database_connection() as connection:
+            statuses = connection.execute(
+                "SELECT status FROM reminders ORDER BY id"
+            ).fetchall()
+        self.assertEqual([row["status"] for row in statuses], ["failed", "failed"])
+
+    def test_complete_tasks_cancels_only_requested_active_tasks(self):
+        first_task = self.create_task()
+        second_task = self.create_task("daily")
+
+        self.assertEqual(tasks.complete_tasks([first_task.id, second_task.id, 999]), 2)
+        self.assertEqual(tasks.list_active_tasks(), [])
+
+    def test_update_task_changes_title_and_schedule(self):
+        task = self.create_task()
+
+        updated_task = tasks.update_task(
+            task.id,
+            title="Send report",
+            due_at="2099-01-03T09:00:00+05:30",
+            recurrence="daily",
+        )
+
+        self.assertEqual(updated_task.title, "Send report")
+        self.assertEqual(updated_task.recurrence_rule, "daily")
+        self.assertEqual(
+            updated_task.next_due_at, datetime(2099, 1, 3, 3, 30, tzinfo=timezone.utc)
+        )
+        with tasks.database_connection() as connection:
+            reminder = connection.execute("SELECT * FROM reminders WHERE task_id = ?", (task.id,)).fetchall()
+        self.assertEqual(len(reminder), 2)
+        self.assertEqual(reminder[-1]["status"], "pending")
+
     def test_claim_recovers_expired_lease_and_delivery_creates_next_recurrence(self):
         task = self.create_task("daily")
         claim_time = task.next_due_at + timedelta(minutes=1)

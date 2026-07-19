@@ -12,6 +12,7 @@ from src import config
 from src.utils.errors import try_catch, try_catch_context
 
 logger = logging.getLogger(__name__)
+UNSET = object()
 
 CREATE_TASKS_TABLE = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -240,6 +241,121 @@ def complete_task(task_id: int) -> bool:
                 (format_timestamp(completed_at), task_id),
             )
         return cursor.rowcount == 1
+
+
+def clear_active_tasks() -> int:
+    cleared_at = utc_now()
+    with database_connection() as connection:
+        connection.execute(
+            """
+            UPDATE reminders
+            SET status = 'failed', lease_expires_at = NULL, lease_token = NULL, updated_at = ?
+            WHERE status IN ('pending', 'leased')
+              AND task_id IN (SELECT id FROM tasks WHERE status = 'active')
+            """,
+            (format_timestamp(cleared_at),),
+        )
+        cursor = connection.execute(
+            "UPDATE tasks SET status = 'cancelled' WHERE status = 'active'"
+        )
+        return cursor.rowcount
+
+
+def complete_tasks(task_ids: list[int]) -> int:
+    if not task_ids or any(not isinstance(task_id, int) or isinstance(task_id, bool) for task_id in task_ids):
+        raise ValueError("Task IDs must be a non-empty list of whole numbers.")
+    unique_task_ids = sorted(set(task_ids))
+    placeholders = ", ".join("?" for _ in unique_task_ids)
+    completed_at = utc_now()
+    with database_connection() as connection:
+        connection.execute(
+            f"""
+            UPDATE reminders SET status = 'failed', lease_expires_at = NULL, lease_token = NULL,
+                updated_at = ?
+            WHERE task_id IN ({placeholders}) AND status IN ('pending', 'leased')
+            """,
+            (format_timestamp(completed_at), *unique_task_ids),
+        )
+        cursor = connection.execute(
+            f"""
+            UPDATE tasks SET status = 'cancelled'
+            WHERE id IN ({placeholders}) AND status = 'active'
+            """,
+            unique_task_ids,
+        )
+        return cursor.rowcount
+
+
+def update_task(
+    task_id: int,
+    *,
+    title: str | None = None,
+    due_at: str | None = None,
+    recurrence: str | None | object = UNSET,
+    task_timezone: str | object = UNSET,
+) -> ScheduledTask | None:
+    if not isinstance(task_id, int) or isinstance(task_id, bool):
+        raise ValueError("Task ID must be a whole number.")
+    if title is not None and (not isinstance(title, str) or not title.strip()):
+        raise ValueError("Task title is required.")
+    if due_at is not None and not isinstance(due_at, str):
+        raise ValueError("Due time must be an ISO 8601 datetime.")
+    if recurrence is not UNSET and recurrence is not None and not isinstance(recurrence, str):
+        raise ValueError("Recurrence must be a string.")
+    if task_timezone is not UNSET and not isinstance(task_timezone, str):
+        raise ValueError("Timezone must be a valid IANA timezone name.")
+
+    updated_at = utc_now()
+    with database_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM tasks WHERE id = ? AND status = 'active'", (task_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        new_title = title.strip() if title is not None else row["title"]
+        new_timezone = row["timezone"] if task_timezone is UNSET else task_timezone
+        new_recurrence = row["recurrence_rule"] if recurrence is UNSET else recurrence
+        new_due_at, new_timezone, new_recurrence = validate_schedule(
+            due_at or row["next_due_at"], new_recurrence, new_timezone
+        )
+        schedule_changed = due_at is not None or recurrence is not UNSET or task_timezone is not UNSET
+        connection.execute(
+            """
+            UPDATE tasks
+            SET title = ?, timezone = ?, recurrence_rule = ?, next_due_at = ?
+            WHERE id = ?
+            """,
+            (
+                new_title,
+                new_timezone,
+                new_recurrence,
+                format_timestamp(new_due_at),
+                task_id,
+            ),
+        )
+        if schedule_changed:
+            connection.execute(
+                """
+                UPDATE reminders
+                SET status = 'failed', lease_expires_at = NULL, lease_token = NULL, updated_at = ?
+                WHERE task_id = ? AND status IN ('pending', 'leased')
+                """,
+                (format_timestamp(updated_at), task_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO reminders (task_id, scheduled_at, status, created_at, updated_at)
+                VALUES (?, ?, 'pending', ?, ?)
+                """,
+                (
+                    task_id,
+                    format_timestamp(new_due_at),
+                    format_timestamp(updated_at),
+                    format_timestamp(updated_at),
+                ),
+            )
+        updated_row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    return task_from_row(updated_row)
 
 
 def claim_due_reminder(now: datetime | None = None) -> Reminder | None:
