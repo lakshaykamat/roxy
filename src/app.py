@@ -4,11 +4,24 @@ from typing import Any
 
 import uvicorn
 from telegram import Update
-from telegram.ext import Application, ApplicationBuilder, CommandHandler, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
 from src.config import ALLOWED_USER_ID, BOT_TOKEN
 from src.handlers.chat import chat
-from src.handlers.commands import done, list_tasks, start
+from src.handlers.commands import (
+    TASKS_BUTTON_TEXT,
+    complete_task_callback,
+    done,
+    list_tasks,
+    start,
+)
 from src.utils.errors import try_async
 from src.web import app as web_app
 
@@ -31,6 +44,12 @@ def create_telegram_application() -> Application:
     application.add_handler(CommandHandler("start", allowed_only(start)))
     application.add_handler(CommandHandler("tasks", allowed_only(list_tasks)))
     application.add_handler(CommandHandler("done", allowed_only(done)))
+    application.add_handler(
+        MessageHandler(filters.Regex(f"^{TASKS_BUTTON_TEXT}$"), allowed_only(list_tasks))
+    )
+    application.add_handler(
+        CallbackQueryHandler(allowed_only(complete_task_callback), pattern=r"^done:")
+    )
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, allowed_only(chat))
     )

@@ -56,11 +56,11 @@ async def process_burst(chat_id: int, pending_messages: list[PendingMessage]) ->
 
 def build_burst_messages(pending_messages: list[PendingMessage]) -> list[object]:
     current_time = datetime.now(ZoneInfo(config.TASK_TIMEZONE)).isoformat()
-    system_message = f"{SYSTEM_PROMPT}\nCurrent time in {config.TASK_TIMEZONE}: {current_time}"
     user_message = "\n".join(message.text for message in pending_messages)
+    user_message += f"\n\nCurrent time in {config.TASK_TIMEZONE}: {current_time}"
 
     return [
-        {"role": "system", "content": system_message},
+        {"role": "system", "content": SYSTEM_PROMPT},
         *history.get_before(pending_messages[0].id),
         {"role": "user", "content": user_message},
     ]

@@ -17,7 +17,17 @@ class AppTests(unittest.TestCase):
         result = app.create_telegram_application()
 
         self.assertIs(result, application)
-        self.assertEqual(application.add_handler.call_count, 4)
+        self.assertEqual(application.add_handler.call_count, 6)
+        registered_handlers = [
+            call.args[0] for call in application.add_handler.call_args_list
+        ]
+        callback_handler = next(
+            handler
+            for handler in registered_handlers
+            if handler.__class__.__name__ == "CallbackQueryHandler"
+        )
+        self.assertEqual(callback_handler.pattern.pattern, "^done:")
+        self.assertEqual(callback_handler.callback.__name__, "wrapper")
 
     @patch("src.app.uvicorn.Server")
     @patch("src.app.create_telegram_application")

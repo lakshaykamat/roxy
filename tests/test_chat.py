@@ -62,14 +62,47 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("src.handlers.chat.history.get_before", return_value=[{"role": "user", "content": "Earlier"}]) as get_before, patch(
             "src.handlers.chat.history.add"
-        ) as add, patch("src.handlers.chat.run_agent_loop", new=AsyncMock(return_value=reply)) as run_agent_loop:
+        ) as add, patch("src.handlers.chat.run_agent_loop", new=AsyncMock(return_value=reply)) as run_agent_loop, patch(
+            "src.handlers.chat.datetime"
+        ) as mocked_datetime:
+            mocked_datetime.now.return_value.isoformat.return_value = "2099-01-02T19:00:00+05:30"
             await chat.process_burst(7, pending_messages)
 
         get_before.assert_called_once_with(4)
         messages = run_agent_loop.await_args.args[0]
-        self.assertEqual(messages[-2:], [{"role": "user", "content": "Earlier"}, {"role": "user", "content": "First thought\nand second"}])
+        self.assertEqual(
+            messages[-2:],
+            [
+                {"role": "user", "content": "Earlier"},
+                {
+                    "role": "user",
+                    "content": "First thought\nand second\n\nCurrent time in Asia/Kolkata: 2099-01-02T19:00:00+05:30",
+                },
+            ],
+        )
         add.assert_called_once_with("assistant", reply)
         send_reply.assert_awaited_once_with(7, reply)
+
+    def test_build_burst_messages_places_current_time_after_history(self):
+        pending_messages = [PendingMessage(4, "First thought", AsyncMock())]
+        previous_messages = [{"role": "assistant", "content": "Earlier reply"}]
+
+        with patch("src.handlers.chat.history.get_before", return_value=previous_messages), patch(
+            "src.handlers.chat.datetime"
+        ) as mocked_datetime:
+            mocked_datetime.now.return_value.isoformat.return_value = "2099-01-02T19:00:00+05:30"
+
+            messages = chat.build_burst_messages(pending_messages)
+
+        self.assertEqual(messages[0], {"role": "system", "content": chat.SYSTEM_PROMPT})
+        self.assertEqual(messages[1], previous_messages[0])
+        self.assertEqual(
+            messages[2],
+            {
+                "role": "user",
+                "content": "First thought\n\nCurrent time in Asia/Kolkata: 2099-01-02T19:00:00+05:30",
+            },
+        )
 
     async def test_message_during_model_call_becomes_next_burst(self):
         send_reply = AsyncMock()
@@ -145,6 +178,17 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result["ok"])
         self.assertIn("title", result["error"])
+
+    def test_execute_tool_call_rejects_generic_reminder_title(self):
+        with patch("src.tools.schedule_task.tasks.create_task") as create_task:
+            result = chat.execute_tool_call(
+                "schedule_task",
+                '{"title":"Reminder","due_at":"2099-01-02T19:00:00+05:30"}',
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("what to remind", result["error"])
+        create_task.assert_not_called()
 
     async def test_agent_loop_returns_final_response_after_tool_result(self):
         tool_call = SimpleNamespace(

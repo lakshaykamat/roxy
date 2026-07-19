@@ -83,6 +83,20 @@ class TaskTests(unittest.TestCase):
         active_task = tasks.list_active_tasks()[0]
         self.assertEqual(active_task.next_due_at, task.next_due_at + timedelta(days=1))
 
+    def test_delivery_completes_one_time_task(self):
+        task = self.create_task()
+        delivery_time = task.next_due_at + timedelta(minutes=1)
+        reminder = tasks.claim_due_reminder(delivery_time)
+
+        tasks.mark_reminder_delivered(reminder.id, reminder.lease_token, delivery_time)
+
+        self.assertEqual(tasks.list_active_tasks(), [])
+        with tasks.database_connection() as connection:
+            completed_at = connection.execute(
+                "SELECT completed_at FROM tasks WHERE id = ?", (task.id,)
+            ).fetchone()["completed_at"]
+        self.assertEqual(tasks.parse_timestamp(completed_at), delivery_time)
+
     def test_delivery_skips_missed_recurring_occurrences(self):
         task = self.create_task("daily")
         delivery_time = task.next_due_at + timedelta(days=10)

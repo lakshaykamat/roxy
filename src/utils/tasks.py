@@ -344,6 +344,11 @@ def mark_reminder_delivered(
                     format_timestamp(completion_time),
                 ),
             )
+        elif task["status"] == "active":
+            connection.execute(
+                "UPDATE tasks SET status = 'completed', completed_at = ? WHERE id = ?",
+                (format_timestamp(completion_time), task["id"]),
+            )
 
 
 def record_delivery_failure(

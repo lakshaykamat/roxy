@@ -8,6 +8,7 @@ from src.utils.errors import try_catch
 from src.utils import tasks
 
 logger = logging.getLogger(__name__)
+GENERIC_TITLES = {"reminder", "a reminder", "task", "a task"}
 
 DEFINITION = {
     "type": "function",
@@ -17,7 +18,10 @@ DEFINITION = {
         "parameters": {
             "type": "object",
             "properties": {
-                "title": {"type": "string", "description": "Concise reminder text."},
+                "title": {
+                    "type": "string",
+                    "description": "Specific thing to remind the user about; never a generic title such as 'Reminder'.",
+                },
                 "due_at": {
                     "type": "string",
                     "description": "Timezone-aware ISO 8601 datetime.",
@@ -45,8 +49,11 @@ def execute(arguments: str) -> dict[str, object]:
             raise ValueError("Tool arguments must be an object.")
         if set(values) - {"title", "due_at", "recurrence", "timezone"}:
             raise ValueError("Tool arguments contain an unsupported field.")
+        title = values["title"]
+        if isinstance(title, str) and title.strip().casefold() in GENERIC_TITLES:
+            raise ValueError("Reminder title must say what to remind the user about.")
         task = tasks.create_task(
-            title=values["title"],
+            title=title,
             due_at=values["due_at"],
             recurrence=values.get("recurrence"),
             task_timezone=values.get("timezone") or TASK_TIMEZONE,
