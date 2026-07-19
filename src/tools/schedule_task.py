@@ -4,6 +4,7 @@ import sqlite3
 from zoneinfo import ZoneInfo
 
 from src.config import TASK_TIMEZONE
+from src.utils.errors import try_catch
 from src.utils import tasks
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ DEFINITION = {
 
 
 def execute(arguments: str) -> dict[str, object]:
-    try:
+    def create_scheduled_task() -> dict[str, object]:
         values = json.loads(arguments)
         if not isinstance(values, dict):
             raise ValueError("Tool arguments must be an object.")
@@ -50,18 +51,33 @@ def execute(arguments: str) -> dict[str, object]:
             recurrence=values.get("recurrence"),
             task_timezone=values.get("timezone") or TASK_TIMEZONE,
         )
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-        return {"ok": False, "error": str(error)}
-    except sqlite3.Error:
-        logger.exception("Unable to create scheduled task")
-        return {"ok": False, "error": "I couldn't save that reminder. Please try again."}
+        due_at = task.next_due_at.astimezone(ZoneInfo(task.timezone))
+        return {
+            "ok": True,
+            "task_id": task.id,
+            "title": task.title,
+            "due_at": due_at.isoformat(),
+            "timezone": task.timezone,
+            "recurrence": task.recurrence_rule or "one-time",
+        }
 
-    due_at = task.next_due_at.astimezone(ZoneInfo(task.timezone))
-    return {
-        "ok": True,
-        "task_id": task.id,
-        "title": task.title,
-        "due_at": due_at.isoformat(),
-        "timezone": task.timezone,
-        "recurrence": task.recurrence_rule or "one-time",
-    }
+    def handle_error(error: BaseException) -> dict[str, object]:
+        if isinstance(error, sqlite3.Error):
+            logger.exception("Unable to create scheduled task")
+            return {
+                "ok": False,
+                "error": "I couldn't save that reminder. Please try again.",
+            }
+        return {"ok": False, "error": str(error)}
+
+    return try_catch(
+        create_scheduled_task,
+        handle_error=handle_error,
+        exception_types=(
+            KeyError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+            sqlite3.Error,
+        ),
+    )

@@ -9,6 +9,7 @@ from typing import Iterator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from src import config
+from src.utils.errors import try_catch, try_catch_context
 
 logger = logging.getLogger(__name__)
 
@@ -85,20 +86,23 @@ def parse_timestamp(value: str) -> datetime:
 def database_connection() -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(config.DATABASE_PATH)
     connection.row_factory = sqlite3.Row
-    try:
+    def handle_database_error(error: BaseException) -> None:
+        connection.rollback()
+        logger.exception("Unable to access scheduled tasks database")
+        raise error
+
+    with try_catch_context(
+        handle_error=handle_database_error,
+        exception_types=sqlite3.Error,
+        success_handler=connection.commit,
+        finally_handler=connection.close,
+    ):
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(CREATE_TASKS_TABLE)
         connection.execute(CREATE_REMINDERS_TABLE)
         ensure_reminder_lease_token(connection)
         connection.execute(CREATE_REMINDER_LOOKUP_INDEX)
         yield connection
-        connection.commit()
-    except sqlite3.Error:
-        connection.rollback()
-        logger.exception("Unable to access scheduled tasks database")
-        raise
-    finally:
-        connection.close()
 
 
 def ensure_reminder_lease_token(connection: sqlite3.Connection) -> None:
@@ -135,15 +139,23 @@ def validate_schedule(
     timezone_name = task_timezone or config.TASK_TIMEZONE
     if not isinstance(timezone_name, str):
         raise ValueError("Timezone must be a valid IANA timezone name.")
-    try:
-        ZoneInfo(timezone_name)
-    except (TypeError, ZoneInfoNotFoundError) as error:
+    def invalid_timezone(error: BaseException) -> None:
         raise ValueError("Timezone must be a valid IANA timezone name.") from error
 
-    try:
-        parsed_due_at = datetime.fromisoformat(due_at)
-    except (TypeError, ValueError) as error:
+    try_catch(
+        lambda: ZoneInfo(timezone_name),
+        handle_error=invalid_timezone,
+        exception_types=(TypeError, ZoneInfoNotFoundError),
+    )
+
+    def invalid_due_at(error: BaseException) -> None:
         raise ValueError("Due time must be an ISO 8601 datetime.") from error
+
+    parsed_due_at = try_catch(
+        lambda: datetime.fromisoformat(due_at),
+        handle_error=invalid_due_at,
+        exception_types=(TypeError, ValueError),
+    )
     if parsed_due_at.tzinfo is None or parsed_due_at.utcoffset() is None:
         raise ValueError("Due time must include a timezone offset.")
 

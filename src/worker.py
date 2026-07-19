@@ -7,6 +7,7 @@ from telegram import Bot
 from telegram.error import NetworkError, RetryAfter, TelegramError, TimedOut
 
 from src.config import ALLOWED_USER_ID, BOT_TOKEN
+from src.utils.errors import try_async
 from src.utils import tasks
 
 logger = logging.getLogger(__name__)
@@ -18,40 +19,61 @@ class ReminderWorker:
         self.poll_interval_seconds = poll_interval_seconds
 
     async def process_next_reminder(self) -> bool:
-        try:
+        async def process_reminder() -> bool:
             reminder = tasks.claim_due_reminder()
             if reminder is None:
                 return False
 
-            try:
+            async def deliver_reminder() -> bool:
                 await self.bot.send_message(
                     chat_id=ALLOWED_USER_ID,
                     text=f"Reminder: {reminder.title}",
                 )
-            except (NetworkError, RetryAfter, TimedOut, OSError) as error:
-                retry_at = tasks.utc_now() + retry_delay(reminder.attempt_count)
-                tasks.record_delivery_failure(
-                    reminder.id, reminder.lease_token, str(error), retry_at
-                )
-                logger.warning(
-                    "Reminder %s delivery failed and will retry: %s", reminder.id, error
-                )
-            except TelegramError as error:
-                tasks.mark_reminder_failed(reminder.id, reminder.lease_token, str(error))
-                logger.error("Reminder %s cannot be delivered: %s", reminder.id, error)
-            except Exception as error:
-                retry_at = tasks.utc_now() + retry_delay(reminder.attempt_count)
-                tasks.record_delivery_failure(
-                    reminder.id, reminder.lease_token, str(error), retry_at
-                )
-                logger.exception("Reminder %s delivery failed unexpectedly", reminder.id)
-            else:
+
+                return True
+
+            async def handle_delivery_error(error: BaseException) -> bool:
+                if isinstance(error, (NetworkError, RetryAfter, TimedOut, OSError)):
+                    retry_at = tasks.utc_now() + retry_delay(reminder.attempt_count)
+                    tasks.record_delivery_failure(
+                        reminder.id, reminder.lease_token, str(error), retry_at
+                    )
+                    logger.warning(
+                        "Reminder %s delivery failed and will retry: %s", reminder.id, error
+                    )
+                elif isinstance(error, TelegramError):
+                    tasks.mark_reminder_failed(
+                        reminder.id, reminder.lease_token, str(error)
+                    )
+                    logger.error("Reminder %s cannot be delivered: %s", reminder.id, error)
+                else:
+                    retry_at = tasks.utc_now() + retry_delay(reminder.attempt_count)
+                    tasks.record_delivery_failure(
+                        reminder.id, reminder.lease_token, str(error), retry_at
+                    )
+                    logger.exception(
+                        "Reminder %s delivery failed unexpectedly", reminder.id
+                    )
+                return False
+
+            delivered = await try_async(
+                deliver_reminder,
+                handle_error=handle_delivery_error,
+            )
+            if delivered:
                 tasks.mark_reminder_delivered(reminder.id, reminder.lease_token)
                 logger.info("Delivered reminder %s", reminder.id)
             return True
-        except sqlite3.Error:
+
+        async def handle_database_error(_: BaseException) -> bool:
             logger.exception("Unable to update reminder delivery state")
             return False
+
+        return await try_async(
+            process_reminder,
+            handle_error=handle_database_error,
+            exception_types=sqlite3.Error,
+        )
 
     async def run(self) -> None:
         logger.info("Reminder worker started")

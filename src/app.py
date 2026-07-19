@@ -9,6 +9,7 @@ from telegram.ext import Application, ApplicationBuilder, CommandHandler, Messag
 from src.config import ALLOWED_USER_ID, BOT_TOKEN
 from src.handlers.chat import chat
 from src.handlers.commands import done, list_tasks, start
+from src.utils.errors import try_async
 from src.web import app as web_app
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,8 @@ async def _start_telegram_polling(telegram_app: Application) -> None:
     application_started = False
     polling_started = False
 
-    try:
+    async def start_polling() -> None:
+        nonlocal application_initialized, application_started, polling_started
         await telegram_app.initialize()
         application_initialized = True
         await telegram_app.start()
@@ -67,14 +69,21 @@ async def _start_telegram_polling(telegram_app: Application) -> None:
         await telegram_app.updater.start_polling()
         polling_started = True
         logger.info("Telegram polling started")
-    except BaseException:
+
+    async def shutdown_after_failure(error: BaseException) -> None:
         await _shutdown_telegram_application(
             telegram_app,
             application_initialized=application_initialized,
             application_started=application_started,
             polling_started=polling_started,
         )
-        raise
+        raise error
+
+    await try_async(
+        start_polling,
+        handle_error=shutdown_after_failure,
+        exception_types=BaseException,
+    )
 
 
 async def _serve_http(server: uvicorn.Server) -> None:
@@ -90,7 +99,8 @@ async def run() -> None:
     telegram_app: Application | None = None
     telegram_started = False
 
-    try:
+    async def run_application() -> None:
+        nonlocal telegram_app, telegram_started
         telegram_app = create_telegram_application()
         server = uvicorn.Server(
             uvicorn.Config(web_app, host="0.0.0.0", port=8000, workers=1)
@@ -98,10 +108,12 @@ async def run() -> None:
         await _start_telegram_polling(telegram_app)
         telegram_started = True
         await _serve_http(server)
-    except Exception:
+
+    async def log_lifecycle_failure(error: BaseException) -> None:
         logger.exception("Application lifecycle failed")
-        raise
-    finally:
+        raise error
+
+    async def shutdown_application() -> None:
         if telegram_app is not None and telegram_started:
             await _shutdown_telegram_application(
                 telegram_app,
@@ -110,3 +122,9 @@ async def run() -> None:
                 polling_started=True,
             )
         logger.info("Application shutdown complete")
+
+    await try_async(
+        run_application,
+        handle_error=log_lifecycle_failure,
+        finally_handler=shutdown_application,
+    )

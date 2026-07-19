@@ -29,6 +29,8 @@ Use Python conventions: four-space indentation, `snake_case` for functions and v
 
 Write simple, readable code that favors clarity over cleverness. Choose self-explanatory names and single-responsibility functions. Do not over-engineer for future requirements; keep business logic lean, extract utilities only when an operation is reused, and centralize shared types instead of scattering them. Create abstractions only when needed, avoid circular dependencies, handle errors idiomatically, and log meaningful failures. Prefer self-documenting code—if a comment must explain what code does, rewrite the code for clarity.
 
+Use the shared error-handling utilities in `src/utils/errors.py` for all exception handling. Do not add direct `try`/`except` blocks outside that module; provide the operation and its recovery behavior to the appropriate utility instead.
+
 ## Testing Guidelines
 
 Tests use the standard-library `unittest` framework. Name test modules `test_<area>.py`, test classes `<Area>Tests`, and test methods `test_<behavior>`. Add or update focused tests for every behavior change. Isolate filesystem or database effects with temporary paths, as `tests/test_history.py` does, and run the full suite before handing off changes.

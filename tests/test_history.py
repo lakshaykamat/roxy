@@ -35,6 +35,23 @@ class HistoryTests(unittest.TestCase):
             ],
         )
 
+    def test_add_returns_message_id_and_get_before_excludes_boundary(self):
+        first_id = history.add("user", "first")
+        second_id = history.add("user", "second")
+
+        self.assertEqual(first_id, 1)
+        self.assertEqual(second_id, 2)
+        self.assertEqual(history.get_before(second_id), [{"role": "user", "content": "first"}])
+
+    def test_get_before_uses_configured_message_limit(self):
+        for number in range(3):
+            history.add("user", str(number))
+
+        with patch.object(config, "MAX_MESSAGES", 1):
+            messages = history.get_before(4)
+
+        self.assertEqual(messages, [{"role": "user", "content": "2"}])
+
     def test_get_limits_history_to_forty_messages(self):
         for number in range(41):
             history.add("user", str(number))
