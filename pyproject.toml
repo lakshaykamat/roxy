@@ -5,9 +5,11 @@ description = "A single-user Telegram chatbot powered by OpenAI."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "fastapi",
     "openai",
     "python-dotenv",
     "python-telegram-bot",
+    "uvicorn",
 ]
 
 [tool.uv]

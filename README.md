@@ -56,6 +56,13 @@ Start the bot:
 uv run python main.py
 ```
 
+While the bot is polling, its health endpoint is available at
+`http://127.0.0.1:8000/health`:
+
+```json
+{"status": "ok"}
+```
+
 ## Development
 
 `uv` manages the project environment and reproduces dependencies from
