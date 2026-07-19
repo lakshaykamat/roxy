@@ -79,8 +79,7 @@ python main.py
 
 | Command | Description |
 |---|---|
-| `/start` | Greet Roxy and reset conversation |
-| `/reset` | Wipe memory and start fresh |
+| `/start` | Greet Roxy |
 
 ## Customising Roxy
 
