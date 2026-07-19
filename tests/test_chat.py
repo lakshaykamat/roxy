@@ -150,6 +150,15 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(task.done())
             self.assertEqual(await task, "Done")
 
+    async def test_agent_loop_uses_model_defaults_for_temperature(self):
+        final_response = SimpleNamespace(content="Done", tool_calls=None)
+        response = SimpleNamespace(choices=[SimpleNamespace(message=final_response)])
+
+        with patch.object(chat.client.chat.completions, "create", return_value=response) as create:
+            await chat.run_agent_loop([{"role": "system", "content": "test"}])
+
+        self.assertNotIn("temperature", create.call_args.kwargs)
+
     def test_execute_tool_call_returns_task_details(self):
         task = ScheduledTask(
             4,

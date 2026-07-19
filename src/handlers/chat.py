@@ -76,7 +76,6 @@ async def run_agent_loop(messages: list[object]) -> str:
             model=config.OPENAI_MODEL,
             messages=messages,
             tools=TOOL_DEFINITIONS,
-            temperature=0.8,
         )
         message = response.choices[0].message
         if not message.tool_calls:
