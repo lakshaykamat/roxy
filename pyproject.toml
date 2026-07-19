@@ -1,0 +1,14 @@
+[project]
+name = "roxy"
+version = "0.1.0"
+description = "A single-user Telegram chatbot powered by OpenAI."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "openai",
+    "python-dotenv",
+    "python-telegram-bot",
+]
+
+[tool.uv]
+package = false
