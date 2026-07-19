@@ -21,7 +21,7 @@ roxy/
 │   ├── utils/
 │   │   └── history.py       # Conversation history (add / get / clear)
 │   └── handlers/
-│       ├── commands.py      # /start, /reset
+│       ├── commands.py      # /start command
 │       └── chat.py          # Message → OpenAI → reply
 ├── .env.example
 └── .gitignore
