@@ -27,7 +27,7 @@ class CommandTests(unittest.TestCase):
             asyncio.run(commands.list_tasks(update, MagicMock()))
 
         update.message.reply_text.assert_awaited_once_with(
-            "You don't have any active tasks.", reply_markup=None
+            "You don't have any active tasks."
         )
 
     def test_start_command_sends_persistent_tasks_button(self):
@@ -42,7 +42,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(reply_markup.keyboard[0][0].text, commands.TASKS_BUTTON_TEXT)
         self.assertTrue(reply_markup.is_persistent)
 
-    def test_tasks_command_shows_completion_button_for_each_task(self):
+    def test_tasks_command_shows_numbered_list_without_completion_buttons(self):
         task = SimpleNamespace(
             id=3,
             title="Pay rent",
@@ -58,10 +58,10 @@ class CommandTests(unittest.TestCase):
             asyncio.run(commands.list_tasks(update, MagicMock()))
 
         text = update.message.reply_text.await_args.args[0]
-        reply_markup = update.message.reply_text.await_args.kwargs["reply_markup"]
         self.assertIn("3. Pay rent", text)
         self.assertIn("(monthly:21)", text)
-        self.assertEqual(reply_markup.inline_keyboard[0][0].callback_data, "done:3")
+        self.assertIn("/done <task id>", text)
+        self.assertEqual(update.message.reply_text.await_args.kwargs, {})
 
     def test_completion_callback_completes_task_and_refreshes_list(self):
         update = MagicMock()
@@ -79,7 +79,7 @@ class CommandTests(unittest.TestCase):
         complete_task.assert_called_once_with(3)
         update.callback_query.answer.assert_awaited_once_with("Task marked complete.")
         update.callback_query.edit_message_text.assert_awaited_once_with(
-            "You don't have any active tasks.", reply_markup=None
+            "You don't have any active tasks."
         )
 
     def test_completion_callback_rejects_malformed_payload(self):
@@ -130,7 +130,7 @@ class CommandTests(unittest.TestCase):
             "This task is no longer active."
         )
         update.callback_query.edit_message_text.assert_awaited_once_with(
-            "You don't have any active tasks.", reply_markup=None
+            "You don't have any active tasks."
         )
 
     def test_done_command_rejects_invalid_id(self):

@@ -17,6 +17,13 @@ from src.utils.tasks import ScheduledTask
 
 
 class ChatTests(unittest.IsolatedAsyncioTestCase):
+    def test_system_prompt_requests_short_plain_language(self):
+        self.assertIn("casual, friendly female", chat.SYSTEM_PROMPT)
+        self.assertIn("warm, chill, and a little playful", chat.SYSTEM_PROMPT)
+        self.assertIn("plain, everyday English", chat.SYSTEM_PROMPT)
+        self.assertIn("one to three short sentences", chat.SYSTEM_PROMPT)
+        self.assertIn("Ask only one question at a time", chat.SYSTEM_PROMPT)
+
     async def test_chat_persists_each_message_and_submits_to_debounce(self):
         coordinator = MagicMock()
         update = MagicMock()

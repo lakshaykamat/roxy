@@ -1,7 +1,7 @@
 import logging
 import re
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
+from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from zoneinfo import ZoneInfo
 
@@ -14,23 +14,20 @@ TASKS_BUTTON_TEXT = "📅 My tasks"
 COMPLETION_CALLBACK_PATTERN = re.compile(r"done:(\d+)")
 
 
-def task_list_response() -> tuple[str, InlineKeyboardMarkup | None]:
+def task_list_response() -> str:
     active_tasks = tasks.list_active_tasks()
     if not active_tasks:
-        return "You don't have any active tasks.", None
+        return "You don't have any active tasks."
 
     lines = ["Your active tasks:"]
-    buttons = []
     for task in active_tasks:
         due_at = task.next_due_at.astimezone(ZoneInfo(task.timezone))
         recurrence = f" ({task.recurrence_rule})" if task.recurrence_rule else ""
         lines.append(
             f"{task.id}. {task.title} — {due_at:%d %b %Y, %I:%M %p} {task.timezone}{recurrence}"
         )
-        buttons.append(
-            [InlineKeyboardButton("✅ Done", callback_data=f"done:{task.id}")]
-        )
-    return "\n".join(lines), InlineKeyboardMarkup(buttons)
+    lines.append("\nTo complete a task, use /done <task id>.")
+    return "\n".join(lines)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -43,8 +40,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text, reply_markup = task_list_response()
-    await update.message.reply_text(text, reply_markup=reply_markup)
+    await update.message.reply_text(task_list_response())
 
 
 def completion_task_id(callback_data: object) -> int | None:
@@ -112,9 +108,8 @@ async def complete_task_callback(
         error_message="Unable to acknowledge task completion callback",
     )
 
-    text, reply_markup = response
     await log_async_error(
-        lambda: callback_query.edit_message_text(text, reply_markup=reply_markup),
+        lambda: callback_query.edit_message_text(response),
         logger=logger,
         error_message="Unable to refresh task list after completion",
     )
