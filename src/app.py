@@ -8,7 +8,7 @@ from telegram.ext import Application, ApplicationBuilder, CommandHandler, Messag
 
 from src.config import ALLOWED_USER_ID, BOT_TOKEN
 from src.handlers.chat import chat
-from src.handlers.commands import start
+from src.handlers.commands import done, list_tasks, start
 from src.web import app as web_app
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,8 @@ def allowed_only(
 def create_telegram_application() -> Application:
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", allowed_only(start)))
+    application.add_handler(CommandHandler("tasks", allowed_only(list_tasks)))
+    application.add_handler(CommandHandler("done", allowed_only(done)))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, allowed_only(chat))
     )

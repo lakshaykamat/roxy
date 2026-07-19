@@ -42,6 +42,7 @@ Set the following values in `.env`:
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
 OPENAI_API_KEY=your_openai_api_key_here
 ALLOWED_USER_ID=123456789
+TASK_TIMEZONE=Asia/Kolkata
 ```
 
 | Variable | Description |
@@ -49,6 +50,7 @@ ALLOWED_USER_ID=123456789
 | `TELEGRAM_BOT_TOKEN` | Create a bot through [@BotFather](https://t.me/BotFather) on Telegram. |
 | `OPENAI_API_KEY` | Create an API key in the [OpenAI Platform](https://platform.openai.com/api-keys). |
 | `ALLOWED_USER_ID` | Your numeric Telegram user ID. You can retrieve it with [@userinfobot](https://t.me/userinfobot). |
+| `TASK_TIMEZONE` | IANA timezone used when a reminder has no timezone. Defaults to `Asia/Kolkata`. |
 
 Start the bot:
 
@@ -80,6 +82,23 @@ uv run python -m unittest discover -s tests -v
 | Command | Description |
 | --- | --- |
 | `/start` | Starts a conversation with Roxy. |
+| `/tasks` | Lists active reminders. |
+| `/done <id>` | Marks an active reminder complete. |
+
+## Scheduled reminders
+
+Ask Roxy to create a one-time or recurring reminder. She supports daily,
+weekly, and monthly schedules and saves them in `roxy.db`. Run the Telegram bot
+and reminder worker as separate long-running processes:
+
+```bash
+uv run python main.py
+uv run python reminder_worker.py
+```
+
+Use a process manager such as systemd or Docker Compose to restart both
+processes if they stop. Run one reminder worker unless you have validated the
+SQLite lease behavior for multiple workers.
 
 ## Configuration and customization
 

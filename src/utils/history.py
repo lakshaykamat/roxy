@@ -1,11 +1,9 @@
 import logging
 import sqlite3
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Iterator
 
-DATABASE_PATH = Path(__file__).resolve().parents[2] / "roxy.db"
-MAX_MESSAGES = 40
+from src import config
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +19,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
 @contextmanager
 def database_connection() -> Iterator[sqlite3.Connection]:
-    connection = sqlite3.connect(DATABASE_PATH)
+    connection = sqlite3.connect(config.DATABASE_PATH)
     try:
         connection.execute(CREATE_MESSAGES_TABLE)
         yield connection
@@ -46,7 +44,7 @@ def get() -> list[dict[str, str]]:
     with database_connection() as connection:
         rows = connection.execute(
             "SELECT role, content FROM messages ORDER BY id DESC LIMIT ?",
-            (MAX_MESSAGES,),
+            (config.MAX_MESSAGES,),
         ).fetchall()
 
     return [{"role": role, "content": content} for role, content in reversed(rows)]

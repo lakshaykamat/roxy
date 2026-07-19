@@ -17,7 +17,7 @@ class AppTests(unittest.TestCase):
         result = app.create_telegram_application()
 
         self.assertIs(result, application)
-        self.assertEqual(application.add_handler.call_count, 2)
+        self.assertEqual(application.add_handler.call_count, 4)
 
     @patch("src.app.uvicorn.Server")
     @patch("src.app.create_telegram_application")
