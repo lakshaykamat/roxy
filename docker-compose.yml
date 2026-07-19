@@ -1,0 +1,17 @@
+services:
+  roxy:
+    build:
+      context: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_PATH: /app/data/roxy.db
+    ports:
+      - "8000:8000"
+    volumes:
+      - roxy_data:/app/data
+    init: true
+    restart: unless-stopped
+
+volumes:
+  roxy_data:

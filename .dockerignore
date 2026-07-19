@@ -1,0 +1,16 @@
+.env
+.git
+.venv
+venv
+__pycache__
+*.py[cod]
+roxy.db
+data
+tests
+docs
+assets
+README.md
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml

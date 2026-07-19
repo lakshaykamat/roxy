@@ -100,12 +100,42 @@ Use a process manager such as systemd or Docker Compose to restart both
 processes if they stop. Run one reminder worker unless you have validated the
 SQLite lease behavior for multiple workers.
 
+## Docker
+
+Docker Compose runs the Telegram bot and the reminder worker together in one
+container. If either process exits, the container exits and Compose restarts
+it. The SQLite database is stored in the named `roxy_data` volume.
+
+Create `.env` as shown above, then start Roxy:
+
+```bash
+docker compose up --build -d
+```
+
+Check its health and logs:
+
+```bash
+docker compose ps
+curl http://127.0.0.1:8000/health
+docker compose logs -f roxy
+```
+
+To stop it without deleting the persisted database:
+
+```bash
+docker compose down
+```
+
+To remove the database as well, run `docker compose down --volumes`.
+
 ## Configuration and customization
 
 - Update `src/prompts/system.py` to change Roxy's personality and behavior.
 - Update `src/config.py` to select a different OpenAI model or adjust shared
   configuration.
-- Conversation messages are stored in `roxy.db` in the project directory.
+- Native runs store conversation messages in `roxy.db` in the project
+  directory. Docker runs store them in the `roxy_data` volume at
+  `/app/data/roxy.db`.
 
 Keep `.env` and `roxy.db` private. Both are excluded from version control by
 default.
