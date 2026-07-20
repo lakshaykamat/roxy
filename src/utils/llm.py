@@ -12,6 +12,25 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 logger = logging.getLogger(__name__)
 
 
+def _tool_intent_schema(intents: dict[str, str]) -> dict[str, object]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "tool_intent",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "intent": {"type": "string", "enum": ["general", *intents]},
+                    "requires_tool": {"type": "boolean"},
+                },
+                "required": ["intent", "requires_tool"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
 async def ask_llm(
     messages: list[object],
     *,
@@ -55,6 +74,20 @@ async def classify_tool_intent(
     intent_options = "\n".join(
         f"- {name}: {description}" for name, description in intents.items()
     )
+    examples: list[str] = []
+    if "expenses" in intents:
+        examples.extend(
+            [
+                '- "Add 21rs expense as hema aunty" -> expenses, requires_tool=true',
+                '- "Paid ₹21 to Hema aunty" -> expenses, requires_tool=true',
+            ]
+        )
+    if "reminders" in intents:
+        examples.append(
+            '- "Remind me to call Mum tomorrow at 10" -> reminders, requires_tool=true'
+        )
+    examples.append('- "How are you?" -> general, requires_tool=false')
+    routing_examples = "\n".join(examples)
 
     async def classify() -> tuple[str | None, bool]:
         response = await asyncio.to_thread(
@@ -64,22 +97,28 @@ async def classify_tool_intent(
                 {
                     "role": "system",
                     "content": (
-                        "Classify the conversation's latest user turn. Choose an intent only when "
-                        "the user is asking Roxy to use that capability. Set requires_tool to true "
-                        "only when the turn has enough information to execute an action or retrieve "
-                        "facts now. A confirmation of a previously identified action can require a tool. "
-                        "Return only JSON with intent (one listed intent or null) and requires_tool (boolean).\n"
-                        f"Available intents:\n{intent_options}"
+                        "Classify the conversation's latest user turn. Choose a listed intent whenever "
+                        "the turn plausibly asks to use that capability, including informal or abbreviated "
+                        "wording. Use general only for clearly conversational messages that imply no listed "
+                        "capability. If uncertain between general and a listed intent, choose the listed intent. "
+                        "Set requires_tool to true when the turn has enough information to execute an action "
+                        "or retrieve facts now. "
+                        "A confirmation or answer to a prior expense or reminder clarification can require "
+                        "a tool. A user reporting an item and amount is an expense action and requires a tool.\n"
+                        f"Available intents:\n{intent_options}\n"
+                        f"Examples:\n{routing_examples}"
                     ),
                 },
                 *conversation,
             ],
-            response_format={"type": "json_object"},
+            response_format=_tool_intent_schema(intents),
         )
         content = response.choices[0].message.content or "{}"
         result = json.loads(content)
         intent = result.get("intent")
         requires_tool = result.get("requires_tool")
+        if intent == "general" and isinstance(requires_tool, bool):
+            return None, False
         if intent not in intents or not isinstance(requires_tool, bool):
             return None, False
         return intent, requires_tool

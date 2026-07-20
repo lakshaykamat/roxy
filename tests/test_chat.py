@@ -167,7 +167,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("temperature", create.call_args.kwargs)
 
-    async def test_intent_router_uses_the_configured_low_cost_model(self):
+    async def test_intent_router_uses_the_configured_model_for_expense_request(self):
         response = SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -180,16 +180,50 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("src.utils.llm.client.chat.completions.create", return_value=response) as create:
             decision = await llm.classify_tool_intent(
-                [{"role": "user", "content": "Add 10rs biscuit"}],
+                [{"role": "user", "content": "Add 21rs expense as hema aunty"}],
                 {"expenses": "Track personal expenses"},
             )
 
         self.assertEqual(decision, ("expenses", True))
         self.assertEqual(create.call_args.kwargs["model"], config.INTENT_ROUTER_MODEL)
-        self.assertEqual(create.call_args.kwargs["response_format"], {"type": "json_object"})
+        router_prompt = create.call_args.kwargs["messages"][0]["content"]
+        self.assertIn("Use general only for clearly conversational messages", router_prompt)
+        self.assertIn("Add 21rs expense as hema aunty", router_prompt)
+        self.assertEqual(
+            create.call_args.kwargs["response_format"],
+            {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "tool_intent",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "intent": {"type": "string", "enum": ["general", "expenses"]},
+                            "requires_tool": {"type": "boolean"},
+                        },
+                        "required": ["intent", "requires_tool"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+        )
+
+    async def test_intent_router_returns_no_tool_for_general_chat(self):
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"intent":"general","requires_tool":false}'))]
+        )
+
+        with patch("src.utils.llm.client.chat.completions.create", return_value=response):
+            decision = await llm.classify_tool_intent(
+                [{"role": "user", "content": "How are you?"}],
+                {"expenses": "Track personal expenses"},
+            )
+
+        self.assertEqual(decision, (None, False))
 
     async def test_expense_request_requires_an_expense_tool(self):
-        messages = [{"role": "user", "content": "Add 10rs biscuit"}]
+        messages = [{"role": "user", "content": "Add 21rs expense as hema aunty"}]
 
         with patch(
             "src.handlers.chat.available_tool_intents", return_value={"expenses": "Track expenses"}
@@ -220,6 +254,20 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_choice, "required")
         self.assertEqual(tools, [{"name": "reminder"}])
 
+    async def test_non_executable_tool_request_does_not_expose_tools(self):
+        messages = [{"role": "user", "content": "What expense categories can I use?"}]
+
+        with patch(
+            "src.handlers.chat.available_tool_intents", return_value={"expenses": "Track expenses"}
+        ), patch(
+            "src.handlers.chat.classify_tool_intent",
+            new=AsyncMock(return_value=("expenses", False)),
+        ):
+            tools, tool_choice = await chat.select_agent_tools(messages)
+
+        self.assertIsNone(tools)
+        self.assertIsNone(tool_choice)
+
     async def test_tool_result_allows_a_normal_final_response(self):
         messages = [
             {"role": "user", "content": "Add 10rs biscuit"},
@@ -229,7 +277,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         tools, tool_choice = await chat.select_agent_tools(messages)
 
         self.assertIsNone(tool_choice)
-        self.assertEqual(tools, chat.TOOL_DEFINITIONS)
+        self.assertIsNone(tools)
 
     def test_execute_tool_call_returns_task_details(self):
         task = ScheduledTask(

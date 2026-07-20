@@ -10,7 +10,6 @@ from telegram.ext import ContextTypes
 from src import config
 from src.prompts.system import SYSTEM_PROMPT
 from src.tools.registry import (
-    TOOL_DEFINITIONS,
     available_tool_intents,
     execute_tool_call,
     tool_definitions_for_intent,
@@ -75,20 +74,23 @@ def build_burst_messages(pending_messages: list[PendingMessage]) -> list[object]
     ]
 
 
-async def select_agent_tools(messages: list[object]) -> tuple[list[object], str | None]:
+async def select_agent_tools(messages: list[object]) -> tuple[list[object] | None, str | None]:
     if not messages or not isinstance(messages[-1], dict):
-        return TOOL_DEFINITIONS, None
+        return None, None
 
     latest_message = messages[-1]
     if latest_message.get("role") != "user":
-        return TOOL_DEFINITIONS, None
+        return None, None
 
     intent, requires_tool = await classify_tool_intent(messages, available_tool_intents())
     if intent is not None:
-        logger.info("Selected %s tools for the current request", intent)
-        return tool_definitions_for_intent(intent), "required" if requires_tool else None
+        logger.info("Tool intent decision: intent=%s requires_tool=%s", intent, requires_tool)
+        if requires_tool:
+            return tool_definitions_for_intent(intent), "required"
+        return None, None
 
-    return TOOL_DEFINITIONS, None
+    logger.info("Tool intent decision: intent=general requires_tool=False")
+    return None, None
 
 
 debounce_coordinator = DebounceCoordinator(config.CHAT_DEBOUNCE_SECONDS, process_burst)
