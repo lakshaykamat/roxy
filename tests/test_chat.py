@@ -150,7 +150,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             time.sleep(0.05)
             return response
 
-        with patch.object(chat.client.chat.completions, "create", side_effect=create_response):
+        with patch("src.utils.llm.client.chat.completions.create", side_effect=create_response):
             task = asyncio.create_task(chat.run_agent_loop([{"role": "system", "content": "test"}]))
             await asyncio.sleep(0.01)
 
@@ -161,7 +161,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         final_response = SimpleNamespace(content="Done", tool_calls=None)
         response = SimpleNamespace(choices=[SimpleNamespace(message=final_response)])
 
-        with patch.object(chat.client.chat.completions, "create", return_value=response) as create:
+        with patch("src.utils.llm.client.chat.completions.create", return_value=response) as create:
             await chat.run_agent_loop([{"role": "system", "content": "test"}])
 
         self.assertNotIn("temperature", create.call_args.kwargs)
@@ -237,7 +237,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(choices=[SimpleNamespace(message=tool_response)]),
             SimpleNamespace(choices=[SimpleNamespace(message=final_response)]),
         ]
-        with patch.object(chat.client.chat.completions, "create", side_effect=responses), patch(
+        with patch("src.utils.llm.client.chat.completions.create", side_effect=responses), patch(
             "src.handlers.chat.execute_tool_call", return_value={"ok": True}
         ):
             reply = await chat.run_agent_loop([{"role": "system", "content": "test"}])
@@ -250,7 +250,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             function=SimpleNamespace(name="schedule_task", arguments="{}"),
         )
         response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[tool_call]))])
-        with patch.object(chat.client.chat.completions, "create", return_value=response), patch(
+        with patch("src.utils.llm.client.chat.completions.create", return_value=response), patch(
             "src.handlers.chat.execute_tool_call", return_value={"ok": False}
         ):
             reply = await chat.run_agent_loop([{"role": "system", "content": "test"}])
@@ -265,8 +265,8 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         response = SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[tool_call]))]
         )
-        with patch.object(config, "MAX_TOOL_CALL_ROUNDS", 1), patch.object(
-            chat.client.chat.completions, "create", return_value=response
+        with patch.object(config, "MAX_TOOL_CALL_ROUNDS", 1), patch(
+            "src.utils.llm.client.chat.completions.create", return_value=response
         ), patch("src.handlers.chat.execute_tool_call", return_value={"ok": False}):
             reply = await chat.run_agent_loop([{"role": "system", "content": "test"}])
 

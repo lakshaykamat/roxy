@@ -31,7 +31,7 @@ jobs:
           ALLOWED_USER_ID: "1"
           TELEGRAM_BOT_TOKEN: test-token
           OPENAI_API_KEY: test-key
-        run: uv run python -m pytest tests/ -v
+        run: uv run python -m unittest discover -s tests -v
 
   build-and-push:
     name: Build & Push Image

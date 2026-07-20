@@ -7,8 +7,10 @@ from telegram import Bot
 from telegram.error import NetworkError, RetryAfter, TelegramError, TimedOut
 
 from src.config import ALLOWED_USER_ID, BOT_TOKEN
+from src.prompts.system import SYSTEM_PROMPT
 from src.utils.errors import try_async
 from src.utils import tasks
+from src.utils.llm import ask_llm
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,31 @@ class ReminderWorker:
         self.bot = bot
         self.poll_interval_seconds = poll_interval_seconds
 
+    async def generate_reminder_message(self, reminder: tasks.Reminder) -> str:
+        async def create_message() -> str:
+            response = await ask_llm(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": SYSTEM_PROMPT,
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            "Write one short, natural Telegram reminder. Return only the message. "
+                            f"Reminder instruction: {reminder.title}"
+                        ),
+                    },
+                ]
+            )
+            return response.choices[0].message.content.strip() or reminder.title
+
+        async def use_title_after_generation_error(_: BaseException) -> str:
+            logger.exception("Unable to generate reminder %s; sending its title", reminder.id)
+            return reminder.title
+
+        return await try_async(create_message, handle_error=use_title_after_generation_error)
+
     async def process_next_reminder(self) -> bool:
         async def process_reminder() -> bool:
             reminder = tasks.claim_due_reminder()
@@ -25,9 +52,10 @@ class ReminderWorker:
                 return False
 
             async def deliver_reminder() -> bool:
+                message = await self.generate_reminder_message(reminder)
                 await self.bot.send_message(
                     chat_id=ALLOWED_USER_ID,
-                    text=f"Reminder: {reminder.title}",
+                    text=message,
                 )
 
                 return True

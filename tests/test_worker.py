@@ -2,6 +2,7 @@ import os
 import sqlite3
 import unittest
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 os.environ.setdefault("ALLOWED_USER_ID", "1")
@@ -10,6 +11,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from src.utils.tasks import Reminder
 from src.worker import ReminderWorker, retry_delay
+from src.prompts.system import SYSTEM_PROMPT
 
 
 class WorkerTests(unittest.IsolatedAsyncioTestCase):
@@ -24,18 +26,52 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_process_next_reminder_marks_successful_delivery(self):
         with patch("src.worker.tasks.claim_due_reminder", return_value=self.reminder), patch(
             "src.worker.tasks.mark_reminder_delivered"
-        ) as delivered:
+        ) as delivered, patch(
+            "src.worker.ReminderWorker.generate_reminder_message",
+            new=AsyncMock(return_value="Good morning, sunshine! ☀️"),
+        ):
             processed = await self.worker.process_next_reminder()
 
         self.assertTrue(processed)
-        self.bot.send_message.assert_awaited_once_with(chat_id=1, text="Reminder: Take vitamins")
+        self.bot.send_message.assert_awaited_once_with(
+            chat_id=1, text="Good morning, sunshine! ☀️"
+        )
         delivered.assert_called_once_with(7, "lease-token")
+
+    async def test_generate_reminder_message_falls_back_to_title_when_model_fails(self):
+        with patch(
+            "src.utils.llm.client.chat.completions.create", side_effect=OSError("offline")
+        ), self.assertLogs("src.worker", level="ERROR"):
+            message = await self.worker.generate_reminder_message(self.reminder)
+
+        self.assertEqual(message, "Take vitamins")
+
+    async def test_generate_reminder_message_uses_model_response(self):
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Time for your vitamins! 💊"))]
+        )
+        with patch(
+            "src.utils.llm.client.chat.completions.create", return_value=response
+        ) as create:
+            message = await self.worker.generate_reminder_message(self.reminder)
+
+        self.assertEqual(message, "Time for your vitamins! 💊")
+        self.assertEqual(create.call_args.kwargs["model"], "gpt-5-mini")
+        self.assertIs(create.call_args.kwargs["messages"][0]["content"], SYSTEM_PROMPT)
+        self.assertEqual(
+            create.call_args.kwargs["messages"][-1]["content"],
+            "Write one short, natural Telegram reminder. Return only the message. "
+            "Reminder instruction: Take vitamins",
+        )
 
     async def test_process_next_reminder_schedules_retry_for_network_error(self):
         self.bot.send_message.side_effect = OSError("network down")
         with patch("src.worker.tasks.claim_due_reminder", return_value=self.reminder), patch(
             "src.worker.tasks.record_delivery_failure"
-        ) as failed:
+        ) as failed, patch(
+            "src.worker.ReminderWorker.generate_reminder_message",
+            new=AsyncMock(return_value="Take vitamins"),
+        ):
             await self.worker.process_next_reminder()
 
         self.assertEqual(failed.call_args.args[:3], (7, "lease-token", "network down"))

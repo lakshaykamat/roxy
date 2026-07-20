@@ -4,7 +4,6 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from openai import OpenAI
 from telegram import Update
 from telegram.ext import ContextTypes
 from src import config
@@ -13,8 +12,8 @@ from src.tools.registry import TOOL_DEFINITIONS, execute_tool_call
 from src.utils.debounce import DebounceCoordinator, PendingMessage
 from src.utils.errors import log_async_error, try_async
 from src.utils import history
+from src.utils.llm import ask_llm
 
-client = OpenAI(api_key=config.OPENAI_API_KEY)
 logger = logging.getLogger(__name__)
 FALLBACK_REPLY = "Sorry, I hit a snag. Please send that again in a moment."
 
@@ -71,12 +70,7 @@ debounce_coordinator = DebounceCoordinator(config.CHAT_DEBOUNCE_SECONDS, process
 
 async def run_agent_loop(messages: list[object]) -> str:
     for _ in range(config.MAX_TOOL_CALL_ROUNDS):
-        response = await asyncio.to_thread(
-            client.chat.completions.create,
-            model=config.OPENAI_MODEL,
-            messages=messages,
-            tools=TOOL_DEFINITIONS,
-        )
+        response = await ask_llm(messages, tools=TOOL_DEFINITIONS)
         message = response.choices[0].message
         if not message.tool_calls:
             return message.content or "Sorry, I couldn't prepare a response."
