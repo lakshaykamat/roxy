@@ -100,6 +100,75 @@ Use a process manager such as systemd or Docker Compose to restart both
 processes if they stop. Run one reminder worker unless you have validated the
 SQLite lease behavior for multiple workers.
 
+## Expense tracking
+
+Roxy can record and review your spending through the
+[expense tracker API](https://busty-expense-tracker-api.vercel.app) using plain
+conversation. Talk to her naturally:
+
+- "I spent ₹450 on dinner tonight."
+- "Add 1200 for groceries yesterday."
+- "Show my expenses for July."
+- "How much did I spend on food this month?"
+- "Change the coffee expense to ₹250."
+- "Delete my latest Uber expense." (Roxy confirms before deleting.)
+
+She extracts the title, amount, category, description, and date, infers a
+category when it's obvious, and resolves relative dates ("yesterday", "last
+Friday", "this month") in your timezone. Deletion always asks for explicit
+confirmation, and when a request matches more than one expense she lists the
+candidates so you can pick one.
+
+### Configuration
+
+Expense tracking is **optional**. Roxy only offers the expense tools when
+`EXPENSE_TRACKER_API_KEY` is set; without it she runs as before (chat and
+reminders only) and never advertises a feature she cannot use.
+
+To enable it, set these values in `.env` (see `.env.example`):
+
+```env
+EXPENSE_TRACKER_API_KEY=your_api_key_here
+EXPENSE_TRACKER_BASE_URL=https://busty-expense-tracker-api.vercel.app
+DEFAULT_CURRENCY=INR
+```
+
+| Variable | Description |
+| --- | --- |
+| `EXPENSE_TRACKER_API_KEY` | Sent as the `x-api-key` header on every request. Never logged. |
+| `EXPENSE_TRACKER_BASE_URL` | Optional. Defaults to the hosted API URL above. |
+| `DEFAULT_CURRENCY` | Optional. Currency used when formatting amounts. Defaults to `INR`. Amounts are stored as plain numbers; Roxy never converts currencies. |
+
+Amounts are stored without a currency field, so `DEFAULT_CURRENCY` only affects
+how Roxy displays them.
+
+### Example conversations
+
+```text
+You:  I spent ₹450 on dinner tonight.
+Roxy: Added ₹450 for Dinner under Food for July 20.
+
+You:  Show my expenses for July.
+Roxy: Your latest expenses for July:
+      1. Dinner — ₹450 — Food — July 20
+      2. Uber — ₹320 — Transport — July 19
+      Total: ₹770
+
+You:  How much did I spend by category this month?
+Roxy: This month:
+      Food: ₹2,480
+      Transport: ₹1,260
+      Total: ₹3,740
+
+You:  Change the coffee expense to ₹250.
+Roxy: Updated Coffee from ₹180 to ₹250.
+
+You:  Delete my latest Uber expense.
+Roxy: I found "Uber ride — ₹620 — Transport — July 19". Should I permanently delete it?
+You:  Yes.
+Roxy: Deleted "Uber ride" for ₹620.
+```
+
 ## Docker
 
 Docker Compose runs the Telegram bot and the reminder worker together in one
@@ -147,6 +216,20 @@ main.py                 Application entry point and Telegram access guard
 src/config.py           Environment configuration
 src/handlers/           Telegram command and chat handlers
 src/prompts/system.py   Roxy's system prompt
+src/tools/              LLM tool definitions and handlers (reminders, expenses)
+src/services/           Expense tracker HTTP client, models, and errors
 src/utils/history.py    SQLite-backed conversation history
+src/utils/dates.py      Relative-date parsing for expenses
 tests/                  Automated tests
+```
+
+The expense integration keeps responsibilities separate:
+
+```text
+src/services/expense_tracker_client.py  Async httpx client (connection reuse, timeouts)
+src/services/expense_models.py          Typed models, validation, and matching
+src/services/expense_errors.py          Application-specific exceptions
+src/tools/expenses.py                   LLM tool schemas and handlers
+src/utils/expense_formatting.py         Currency and response formatting
+src/utils/expense_state.py              Conversation state (matches, delete confirmation)
 ```
