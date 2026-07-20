@@ -109,15 +109,38 @@ conversation. Talk to her naturally:
 - "I spent ₹450 on dinner tonight."
 - "Add 1200 for groceries yesterday."
 - "Show my expenses for July."
-- "How much did I spend on food this month?"
+- "How much did I spend by category this month?"
 - "Change the coffee expense to ₹250."
 - "Delete my latest Uber expense." (Roxy confirms before deleting.)
 
-She extracts the title, amount, category, description, and date, infers a
-category when it's obvious, and resolves relative dates ("yesterday", "last
-Friday", "this month") in your timezone. Deletion always asks for explicit
-confirmation, and when a request matches more than one expense she lists the
-candidates so you can pick one.
+She extracts the title, amount, category, description, and date, selects the
+best matching category from the supported list, and resolves relative dates
+("yesterday", "last Friday", "this month") in your timezone. Deletion always
+asks for explicit confirmation, and when a request matches more than one expense
+she lists the candidates so you can pick one.
+
+### Supported categories
+
+Expenses must belong to one of these categories (Roxy selects the best fit
+automatically from context):
+
+| Category | Examples |
+| --- | --- |
+| Food | Coffee, restaurant, lunch, dinner, groceries |
+| Fast Food | McDonald's, KFC, pizza delivery, takeaway |
+| Health & Fitness | Gym, medicine, doctor, pharmacy |
+| Housing | Rent, electricity, internet, furniture |
+| Transportation | Uber, taxi, petrol, train fare |
+| Financial | Insurance, loan payment, bank fee, investment |
+| Family | Family gifts, children's expenses |
+| Relationship | Partner gifts, anniversary |
+| Personal Care | Salon, haircut, skincare, cosmetics |
+| Electronics | Phone, laptop, headphones, gadgets |
+| Clothing | Shirt, shoes, jeans, jacket |
+| Entertainment | Netflix, cinema, Spotify, concert |
+| Education | Books, courses, tuition, coaching |
+| Travel | Flights, hotels, vacation, visa |
+| Miscellaneous | Anything that doesn't fit another category |
 
 ### Configuration
 

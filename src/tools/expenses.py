@@ -17,35 +17,16 @@ import logging
 from src import config
 from src.services import expense_models as models
 from src.services.expense_errors import ExpenseTrackerError, ExpenseValidationError
-from src.services.expense_models import Expense, match_expenses
+from src.services.expense_models import Expense, ExpenseCategory, match_expenses
 from src.services.expense_tracker_client import get_client
 from src.utils import expense_formatting as fmt
 from src.utils import expense_state as state
 
 logger = logging.getLogger(__name__)
 
-# Keyword -> category, used only when the user did not name a category and the
-# title clearly implies one. Low-confidence titles are left uncategorised.
-CATEGORY_KEYWORDS = {
-    "Food": ("coffee", "lunch", "dinner", "breakfast", "snack", "restaurant", "pizza", "tea"),
-    "Transport": ("uber", "taxi", "cab", "fuel", "petrol", "diesel", "bus", "train", "metro", "ola"),
-    "Entertainment": ("netflix", "cinema", "movie", "spotify", "game", "concert"),
-    "Bills": ("electricity", "internet", "rent", "water", "gas bill", "phone bill", "wifi"),
-    "Health": ("medicine", "doctor", "pharmacy", "hospital", "gym", "clinic"),
-    "Groceries": ("groceries", "grocery", "supermarket", "vegetables"),
-    "Education": ("course", "book", "tuition", "class", "udemy"),
-    "Shopping": ("clothes", "shoes", "electronics", "amazon", "shirt", "gadget"),
-}
-
 DATE_FORMAT_NOTE = "Dates use YYYY-MM-DD and months use YYYY-MM."
 
-
-def infer_category(title: str) -> str | None:
-    text = (title or "").casefold()
-    for category, keywords in CATEGORY_KEYWORDS.items():
-        if any(keyword in text for keyword in keywords):
-            return category
-    return None
+_CATEGORY_VALUES = [cat.value for cat in ExpenseCategory]
 
 
 # --------------------------------------------------------------------------- #
@@ -59,14 +40,24 @@ CREATE_DEFINITION = {
         "description": (
             "Record a new expense the user reports spending. Use only when the user is actually "
             "adding an expense, not when merely discussing one. Requires a title (3-100 chars) and "
-            "an amount (>= 0.01). " + DATE_FORMAT_NOTE + " Date defaults to today if omitted."
+            "an amount (>= 0.01). " + DATE_FORMAT_NOTE + " Date defaults to today if omitted. "
+            "If the user names a category alias (e.g. Transport, Bills, Groceries), normalize it "
+            "to the closest supported category before calling this tool."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "title": {"type": "string", "description": "What the money was spent on, e.g. 'Dinner'."},
                 "amount": {"type": "number", "description": "Amount spent, minimum 0.01."},
-                "category": {"type": "string", "description": "Optional free-text category."},
+                "category": {
+                    "type": "string",
+                    "enum": _CATEGORY_VALUES,
+                    "description": (
+                        "Optional spending category. Must be exactly one of the supported values: "
+                        + ", ".join(_CATEGORY_VALUES)
+                        + ". Never invent a new category."
+                    ),
+                },
                 "description": {"type": "string", "description": "Optional note, max 500 chars."},
                 "date": {"type": "string", "description": "Optional expense date in YYYY-MM-DD."},
                 "currency": {"type": "string", "description": "Currency code if the user named one, e.g. USD."},
@@ -146,7 +137,15 @@ UPDATE_DEFINITION = {
                     "properties": {
                         "title": {"type": "string"},
                         "amount": {"type": "number"},
-                        "category": {"type": "string"},
+                        "category": {
+                            "type": "string",
+                            "enum": _CATEGORY_VALUES,
+                            "description": (
+                                "New category. Must be exactly one of: "
+                                + ", ".join(_CATEGORY_VALUES)
+                                + ". Never invent a new category."
+                            ),
+                        },
                         "description": {"type": "string"},
                         "date": {"type": "string", "description": "YYYY-MM-DD"},
                     },
@@ -224,10 +223,6 @@ async def _run(handler) -> dict[str, object]:
 async def create_expense(arguments: str) -> dict[str, object]:
     async def handler() -> dict[str, object]:
         values = _parse_arguments(arguments)
-        if "category" not in values or not values.get("category"):
-            inferred = infer_category(str(values.get("title", "")))
-            if inferred:
-                values = {**values, "category": inferred}
         payload = models.build_create_payload(values)
         expense = await get_client().create_expense(payload)
         currency = _currency(values)

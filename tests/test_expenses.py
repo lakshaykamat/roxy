@@ -21,7 +21,7 @@ from src.services.expense_errors import (
     ExpenseServiceUnavailableError,
     ExpenseValidationError,
 )
-from src.services.expense_models import Expense
+from src.services.expense_models import Expense, ExpenseCategory
 from src.services.expense_tracker_client import ExpenseTrackerClient
 from src.tools import expenses
 from src.utils import expense_state as state
@@ -130,9 +130,70 @@ class ModelTests(unittest.TestCase):
 
     def test_match_expenses_ranks_by_title_category_and_amount(self):
         coffee = Expense("a" * 24, "Coffee", 4.5, "2026-07-20", "Food")
-        uber = Expense("b" * 24, "Uber ride", 6.2, "2026-07-19", "Transport")
+        uber = Expense("b" * 24, "Uber ride", 6.2, "2026-07-19", "Transportation")
         matches = models.match_expenses([coffee, uber], {"title": "uber"})
         self.assertEqual([m.id for m in matches], [uber.id])
+
+    def test_validate_category_accepts_canonical_value(self):
+        payload = models.build_create_payload({"title": "Coffee", "amount": 4.5, "category": "Food"})
+        self.assertEqual(payload["category"], "Food")
+
+    def test_validate_category_case_insensitive(self):
+        payload = models.build_create_payload({"title": "Coffee", "amount": 4.5, "category": "food"})
+        self.assertEqual(payload["category"], "Food")
+        payload2 = models.build_create_payload({"title": "KFC", "amount": 200, "category": "FAST FOOD"})
+        self.assertEqual(payload2["category"], "Fast Food")
+
+    def test_validate_category_rejects_unsupported_value(self):
+        with self.assertRaises(ExpenseValidationError):
+            models.build_create_payload({"title": "Coffee", "amount": 4.5, "category": "Bills"})
+
+    def test_validate_category_rejects_unsupported_in_update(self):
+        with self.assertRaises(ExpenseValidationError):
+            models.build_update_payload({"category": "Transport"})
+
+    def test_all_supported_categories_accepted_in_create(self):
+        for cat in ExpenseCategory:
+            payload = models.build_create_payload({"title": "Test", "amount": 1.0, "category": cat.value})
+            self.assertEqual(payload["category"], cat.value)
+
+    def test_all_supported_categories_accepted_in_update(self):
+        for cat in ExpenseCategory:
+            payload = models.build_update_payload({"category": cat.value})
+            self.assertEqual(payload["category"], cat.value)
+
+
+# --------------------------------------------------------------------------- #
+# Category validation
+# --------------------------------------------------------------------------- #
+
+
+class CategoryValidationTests(unittest.TestCase):
+    def test_tool_schema_create_category_enum_matches_expense_category_enum(self):
+        schema_enums = set(
+            expenses.CREATE_DEFINITION["function"]["parameters"]["properties"]["category"]["enum"]
+        )
+        self.assertEqual(schema_enums, {cat.value for cat in ExpenseCategory})
+
+    def test_tool_schema_update_category_enum_matches_expense_category_enum(self):
+        schema_enums = set(
+            expenses.UPDATE_DEFINITION["function"]["parameters"]["properties"]["changes"]["properties"]["category"]["enum"]
+        )
+        self.assertEqual(schema_enums, {cat.value for cat in ExpenseCategory})
+
+    def test_validate_category_case_insensitive(self):
+        payload = models.build_create_payload({"title": "Coffee", "amount": 4.5, "category": "food"})
+        self.assertEqual(payload["category"], "Food")
+        payload2 = models.build_create_payload({"title": "KFC", "amount": 200, "category": "FAST FOOD"})
+        self.assertEqual(payload2["category"], "Fast Food")
+
+    def test_validate_category_rejects_unsupported_value(self):
+        with self.assertRaises(ExpenseValidationError):
+            models.build_create_payload({"title": "Coffee", "amount": 4.5, "category": "Bills"})
+
+    def test_validate_category_rejects_unsupported_in_update(self):
+        with self.assertRaises(ExpenseValidationError):
+            models.build_update_payload({"category": "Transport"})
 
 
 # --------------------------------------------------------------------------- #
@@ -151,7 +212,7 @@ class FormattingTests(unittest.TestCase):
     def test_format_expense_list_includes_total_and_handles_empty(self):
         expenses_list = [
             Expense("a" * 24, "Dinner", 450, "2026-07-20", "Food"),
-            Expense("b" * 24, "Uber", 320, "2026-07-19", "Transport"),
+            Expense("b" * 24, "Uber", 320, "2026-07-19", "Transportation"),
         ]
         rendered = format_expense_list(expenses_list, "INR", "July")
         self.assertIn("1. Dinner — ₹450 — Food — July 20", rendered)
@@ -161,11 +222,17 @@ class FormattingTests(unittest.TestCase):
             "I couldn't find any expenses for that period.",
         )
 
-    def test_format_category_summary(self):
-        groups = [{"category": "Food", "total": 2480}, {"category": "Bills", "total": 3000}]
+    def test_format_category_summary_uses_canonical_labels(self):
+        groups = [
+            {"category": "Food", "total": 2480},
+            {"category": "Fast Food", "total": 1100},
+            {"category": "Housing", "total": 3000},
+        ]
         rendered = format_category_summary(groups, "INR")
         self.assertIn("Food: ₹2,480", rendered)
-        self.assertIn("Total: ₹5,480", rendered)
+        self.assertIn("Fast Food: ₹1,100", rendered)
+        self.assertIn("Housing: ₹3,000", rendered)
+        self.assertIn("Total: ₹6,580", rendered)
 
 
 # --------------------------------------------------------------------------- #
@@ -350,16 +417,93 @@ class ToolHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(patcher.stop)
         return recorder
 
-    async def test_create_valid_expense_infers_category(self):
+    async def test_create_expense_with_llm_supplied_category(self):
         recorder = Recorder()
         recorder.respond = lambda request: httpx.Response(201, json=expense_json())
+        self.use_client(recorder)
+
+        result = await expenses.create_expense('{"title": "Coffee", "amount": 4.5, "category": "Food"}')
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(json.loads(recorder.requests[0].content)["category"], "Food")
+        self.assertIn("Added", result["formatted"])
+
+    async def test_create_expense_without_category_sends_no_category(self):
+        recorder = Recorder()
+        recorder.respond = lambda request: httpx.Response(201, json=expense_json(category=None))
         self.use_client(recorder)
 
         result = await expenses.create_expense('{"title": "Coffee", "amount": 4.5}')
 
         self.assertTrue(result["ok"])
+        body = json.loads(recorder.requests[0].content)
+        self.assertNotIn("category", body)
+
+    async def test_create_expense_with_canonical_category_sends_it(self):
+        recorder = Recorder()
+        recorder.respond = lambda request: httpx.Response(201, json=expense_json(category="Transportation"))
+        self.use_client(recorder)
+
+        result = await expenses.create_expense('{"title": "Uber", "amount": 180, "category": "Transportation"}')
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(json.loads(recorder.requests[0].content)["category"], "Transportation")
+
+    async def test_create_expense_accepts_case_insensitive_category(self):
+        recorder = Recorder()
+        recorder.respond = lambda request: httpx.Response(201, json=expense_json(category="Food"))
+        self.use_client(recorder)
+
+        result = await expenses.create_expense('{"title": "Lunch", "amount": 200, "category": "food"}')
+
+        self.assertTrue(result["ok"])
         self.assertEqual(json.loads(recorder.requests[0].content)["category"], "Food")
-        self.assertIn("Added", result["formatted"])
+
+    async def test_create_expense_rejects_invalid_category_without_api_call(self):
+        recorder = Recorder()
+        self.use_client(recorder)
+
+        result = await expenses.create_expense('{"title": "Lunch", "amount": 200, "category": "Bills"}')
+
+        self.assertFalse(result["ok"])
+        self.assertIn("Bills", result["error"])
+        self.assertEqual(recorder.requests, [])
+
+    async def test_update_expense_sends_canonical_category(self):
+        def handler(request):
+            if request.method == "GET":
+                return httpx.Response(200, json=expense_json(title="Gym", amount=800, category="Miscellaneous"))
+            return httpx.Response(200, json=expense_json(title="Gym", amount=800, category="Health & Fitness"))
+
+        recorder = Recorder()
+        recorder.respond = handler
+        self.use_client(recorder)
+
+        result = await expenses.update_expense(
+            '{"expense_id": "665f1e2a9c4d1a0012ab34cd", "changes": {"category": "Health & Fitness"}}'
+        )
+
+        self.assertTrue(result["ok"])
+        patch_body = json.loads(next(r for r in recorder.requests if r.method == "PATCH").content)
+        self.assertEqual(patch_body["category"], "Health & Fitness")
+
+    async def test_update_expense_preserves_category_when_not_in_changes(self):
+        def handler(request):
+            if request.method == "GET":
+                return httpx.Response(200, json=expense_json(title="Gym", amount=800, category="Health & Fitness"))
+            return httpx.Response(200, json=expense_json(title="Gym", amount=900, category="Health & Fitness"))
+
+        recorder = Recorder()
+        recorder.respond = handler
+        self.use_client(recorder)
+
+        result = await expenses.update_expense(
+            '{"expense_id": "665f1e2a9c4d1a0012ab34cd", "changes": {"amount": 900}}'
+        )
+
+        self.assertTrue(result["ok"])
+        patch_body = json.loads(next(r for r in recorder.requests if r.method == "PATCH").content)
+        self.assertNotIn("category", patch_body)
 
     async def test_create_rejects_invalid_amount_without_calling_api(self):
         recorder = Recorder()

@@ -82,9 +82,13 @@ async def run_agent_loop(messages: list[object]) -> str:
 
         messages.append(message)
         for tool_call in message.tool_calls:
+            logger.info(
+                "Tool call %s(%s)", tool_call.function.name, tool_call.function.arguments
+            )
             result = execute_tool_call(tool_call.function.name, tool_call.function.arguments)
             if inspect.isawaitable(result):
                 result = await result
+            logger.info("Tool result %s: %s", tool_call.function.name, result)
             messages.append(
                 {
                     "role": "tool",

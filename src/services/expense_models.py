@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
+from enum import Enum
 
 from src.services.expense_errors import ExpenseValidationError
 
@@ -19,12 +20,32 @@ MONTH_PATTERN = re.compile(r"^\d{4}-\d{2}$")
 
 TITLE_MIN = 3
 TITLE_MAX = 100
-CATEGORY_MAX = 50
 DESCRIPTION_MAX = 500
 MIN_AMOUNT = 0.01
 
 # Only these fields are ever accepted from the model or sent to the API.
 WRITABLE_FIELDS = ("title", "amount", "category", "description", "date")
+
+
+class ExpenseCategory(str, Enum):
+    FOOD = "Food"
+    FAST_FOOD = "Fast Food"
+    HEALTH_AND_FITNESS = "Health & Fitness"
+    HOUSING = "Housing"
+    TRANSPORTATION = "Transportation"
+    FINANCIAL = "Financial"
+    FAMILY = "Family"
+    RELATIONSHIP = "Relationship"
+    PERSONAL_CARE = "Personal Care"
+    ELECTRONICS = "Electronics"
+    CLOTHING = "Clothing"
+    ENTERTAINMENT = "Entertainment"
+    EDUCATION = "Education"
+    TRAVEL = "Travel"
+    MISCELLANEOUS = "Miscellaneous"
+
+
+_CATEGORY_LOOKUP: dict[str, str] = {cat.value.casefold(): cat.value for cat in ExpenseCategory}
 
 
 @dataclass(frozen=True)
@@ -134,10 +155,13 @@ def _validate_amount(value: object) -> float:
 def _validate_category(value: object) -> str:
     if not isinstance(value, str):
         raise ExpenseValidationError("The category must be text.")
-    category = value.strip()
-    if len(category) > CATEGORY_MAX:
-        raise ExpenseValidationError(f"The category can be at most {CATEGORY_MAX} characters.")
-    return category
+    canonical = _CATEGORY_LOOKUP.get(value.strip().casefold())
+    if canonical is None:
+        supported = ", ".join(cat.value for cat in ExpenseCategory)
+        raise ExpenseValidationError(
+            f"'{value}' is not a supported category. Supported: {supported}."
+        )
+    return canonical
 
 
 def _validate_description(value: object) -> str:
