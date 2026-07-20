@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import inspect
 import json
 import logging
@@ -25,9 +24,9 @@ FALLBACK_REPLY = "Sorry, I hit a snag. Please send that again in a moment."
 
 
 def build_photo_message(
-    history_before: list[dict], b64_jpeg: str, caption: str
+    history_before: list[dict], image_url: str, caption: str
 ) -> list[object]:
-    image_part = {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_jpeg}"}}
+    image_part = {"type": "image_url", "image_url": {"url": image_url}}
     content: list[object] = []
     if caption:
         content.append({"type": "text", "text": caption})
@@ -55,10 +54,9 @@ async def photo_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     async def process_photo() -> None:
         file = await context.bot.get_file(photo.file_id)
-        photo_bytes = await file.download_as_bytearray()
-        b64 = base64.b64encode(photo_bytes).decode()
+        image_url = f"https://api.telegram.org/file/bot{config.BOT_TOKEN}/{file.file_path}"
         history_before = history.get_before(message_id)
-        messages = build_photo_message(history_before, b64, caption)
+        messages = build_photo_message(history_before, image_url, caption)
         reply = await run_agent_loop(messages)
         history.add("assistant", reply)
         await context.bot.send_message(chat_id, reply)

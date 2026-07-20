@@ -389,9 +389,9 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
 class PhotoChatTests(unittest.IsolatedAsyncioTestCase):
     def test_build_photo_message_without_caption(self):
         history_before = [{"role": "assistant", "content": "Hi there"}]
-        b64 = "abc123"
+        url = "https://api.telegram.org/file/botTOKEN/photo.jpg"
 
-        messages = chat.build_photo_message(history_before, b64, "")
+        messages = chat.build_photo_message(history_before, url, "")
 
         self.assertEqual(messages[0], {"role": "system", "content": chat.SYSTEM_PROMPT})
         self.assertEqual(messages[1], {"role": "assistant", "content": "Hi there"})
@@ -400,12 +400,12 @@ class PhotoChatTests(unittest.IsolatedAsyncioTestCase):
         content = user_msg["content"]
         self.assertEqual(len(content), 1)
         self.assertEqual(content[0]["type"], "image_url")
-        self.assertEqual(content[0]["image_url"]["url"], "data:image/jpeg;base64,abc123")
+        self.assertEqual(content[0]["image_url"]["url"], url)
 
     def test_build_photo_message_with_caption(self):
-        b64 = "xyz789"
+        url = "https://api.telegram.org/file/botTOKEN/photo.jpg"
 
-        messages = chat.build_photo_message([], b64, "What is this?")
+        messages = chat.build_photo_message([], url, "What is this?")
 
         user_msg = messages[-1]
         content = user_msg["content"]
@@ -414,10 +414,6 @@ class PhotoChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(content[1]["type"], "image_url")
 
     async def test_photo_chat_downloads_image_stores_history_and_replies(self):
-        b64_bytes = b"fakeimage"
-        import base64
-        expected_b64 = base64.b64encode(b64_bytes).decode()
-
         update = MagicMock()
         update.effective_chat.id = 42
         update.message.photo = [MagicMock(file_id="file_abc")]
@@ -425,25 +421,26 @@ class PhotoChatTests(unittest.IsolatedAsyncioTestCase):
         update.message.chat.send_action = AsyncMock()
         context = MagicMock()
         mock_file = AsyncMock()
-        mock_file.download_as_bytearray = AsyncMock(return_value=bytearray(b64_bytes))
+        mock_file.file_path = "photos/file_abc.jpg"
         context.bot.get_file = AsyncMock(return_value=mock_file)
         context.bot.send_message = AsyncMock()
 
         with patch("src.handlers.chat.history.add", return_value=99) as add, \
              patch("src.handlers.chat.history.get_before", return_value=[]), \
              patch("src.handlers.chat.run_agent_loop", new=AsyncMock(return_value="It's a cat")) as loop, \
-             patch("src.handlers.chat.history.add") as add2:
+             patch("src.handlers.chat.history.add") as add2, \
+             patch("src.handlers.chat.config.BOT_TOKEN", "test-token"):
             add2.side_effect = [99, None]
             await chat.photo_chat(update, context)
 
         context.bot.get_file.assert_awaited_once_with("file_abc")
-        mock_file.download_as_bytearray.assert_awaited_once()
         sent_messages = loop.await_args.args[0]
         user_msg = sent_messages[-1]
         self.assertEqual(user_msg["role"], "user")
         content = user_msg["content"]
         image_part = next(p for p in content if p["type"] == "image_url")
-        self.assertIn(expected_b64, image_part["image_url"]["url"])
+        self.assertIn("photos/file_abc.jpg", image_part["image_url"]["url"])
+        self.assertIn("test-token", image_part["image_url"]["url"])
 
     async def test_photo_chat_sends_fallback_on_error(self):
         update = MagicMock()
