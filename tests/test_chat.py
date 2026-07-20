@@ -13,6 +13,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 from src import config
 from src.handlers import chat
 from src.utils.debounce import DebounceCoordinator, PendingMessage
+from src.utils import llm
 from src.utils.tasks import ScheduledTask
 
 
@@ -165,6 +166,70 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             await chat.run_agent_loop([{"role": "system", "content": "test"}])
 
         self.assertNotIn("temperature", create.call_args.kwargs)
+
+    async def test_intent_router_uses_the_configured_low_cost_model(self):
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content='{"intent":"expenses","requires_tool":true}'
+                    )
+                )
+            ]
+        )
+
+        with patch("src.utils.llm.client.chat.completions.create", return_value=response) as create:
+            decision = await llm.classify_tool_intent(
+                [{"role": "user", "content": "Add 10rs biscuit"}],
+                {"expenses": "Track personal expenses"},
+            )
+
+        self.assertEqual(decision, ("expenses", True))
+        self.assertEqual(create.call_args.kwargs["model"], config.INTENT_ROUTER_MODEL)
+        self.assertEqual(create.call_args.kwargs["response_format"], {"type": "json_object"})
+
+    async def test_expense_request_requires_an_expense_tool(self):
+        messages = [{"role": "user", "content": "Add 10rs biscuit"}]
+
+        with patch(
+            "src.handlers.chat.available_tool_intents", return_value={"expenses": "Track expenses"}
+        ), patch(
+            "src.handlers.chat.classify_tool_intent",
+            new=AsyncMock(return_value=("expenses", True)),
+        ), patch(
+            "src.handlers.chat.tool_definitions_for_intent", return_value=[{"name": "expense"}]
+        ):
+            tools, tool_choice = await chat.select_agent_tools(messages)
+
+        self.assertEqual(tools, [{"name": "expense"}])
+        self.assertEqual(tool_choice, "required")
+
+    async def test_reminder_request_uses_only_reminder_tools(self):
+        messages = [{"role": "user", "content": "Remind me to call Mum tomorrow at 10"}]
+
+        with patch(
+            "src.handlers.chat.available_tool_intents", return_value={"reminders": "Manage reminders"}
+        ), patch(
+            "src.handlers.chat.classify_tool_intent",
+            new=AsyncMock(return_value=("reminders", True)),
+        ), patch(
+            "src.handlers.chat.tool_definitions_for_intent", return_value=[{"name": "reminder"}]
+        ):
+            tools, tool_choice = await chat.select_agent_tools(messages)
+
+        self.assertEqual(tool_choice, "required")
+        self.assertEqual(tools, [{"name": "reminder"}])
+
+    async def test_tool_result_allows_a_normal_final_response(self):
+        messages = [
+            {"role": "user", "content": "Add 10rs biscuit"},
+            {"role": "tool", "content": "{\"ok\": true}"},
+        ]
+
+        tools, tool_choice = await chat.select_agent_tools(messages)
+
+        self.assertIsNone(tool_choice)
+        self.assertEqual(tools, chat.TOOL_DEFINITIONS)
 
     def test_execute_tool_call_returns_task_details(self):
         task = ScheduledTask(

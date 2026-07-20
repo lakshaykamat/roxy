@@ -174,20 +174,21 @@ Roxy: Added ₹450 for Dinner under Food for July 20.
 You:  Show my expenses for July.
 Roxy: Your latest expenses for July:
       1. Dinner — ₹450 — Food — July 20
-      2. Uber — ₹320 — Transport — July 19
+      2. Uber — ₹320 — Transportation — July 19
       Total: ₹770
 
 You:  How much did I spend by category this month?
 Roxy: This month:
       Food: ₹2,480
-      Transport: ₹1,260
-      Total: ₹3,740
+      Fast Food: ₹1,100
+      Transportation: ₹1,260
+      Total: ₹4,840
 
 You:  Change the coffee expense to ₹250.
 Roxy: Updated Coffee from ₹180 to ₹250.
 
 You:  Delete my latest Uber expense.
-Roxy: I found "Uber ride — ₹620 — Transport — July 19". Should I permanently delete it?
+Roxy: I found "Uber ride — ₹620 — Transportation — July 19". Should I permanently delete it?
 You:  Yes.
 Roxy: Deleted "Uber ride" for ₹620.
 ```

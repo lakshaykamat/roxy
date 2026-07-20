@@ -9,11 +9,16 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from src import config
 from src.prompts.system import SYSTEM_PROMPT
-from src.tools.registry import TOOL_DEFINITIONS, execute_tool_call
+from src.tools.registry import (
+    TOOL_DEFINITIONS,
+    available_tool_intents,
+    execute_tool_call,
+    tool_definitions_for_intent,
+)
 from src.utils.debounce import DebounceCoordinator, PendingMessage
 from src.utils.errors import log_async_error, try_async
 from src.utils import history
-from src.utils.llm import ask_llm
+from src.utils.llm import ask_llm, classify_tool_intent
 
 logger = logging.getLogger(__name__)
 FALLBACK_REPLY = "Sorry, I hit a snag. Please send that again in a moment."
@@ -70,12 +75,29 @@ def build_burst_messages(pending_messages: list[PendingMessage]) -> list[object]
     ]
 
 
+async def select_agent_tools(messages: list[object]) -> tuple[list[object], str | None]:
+    if not messages or not isinstance(messages[-1], dict):
+        return TOOL_DEFINITIONS, None
+
+    latest_message = messages[-1]
+    if latest_message.get("role") != "user":
+        return TOOL_DEFINITIONS, None
+
+    intent, requires_tool = await classify_tool_intent(messages, available_tool_intents())
+    if intent is not None:
+        logger.info("Selected %s tools for the current request", intent)
+        return tool_definitions_for_intent(intent), "required" if requires_tool else None
+
+    return TOOL_DEFINITIONS, None
+
+
 debounce_coordinator = DebounceCoordinator(config.CHAT_DEBOUNCE_SECONDS, process_burst)
 
 
 async def run_agent_loop(messages: list[object]) -> str:
     for _ in range(config.MAX_TOOL_CALL_ROUNDS):
-        response = await ask_llm(messages, tools=TOOL_DEFINITIONS)
+        tools, tool_choice = await select_agent_tools(messages)
+        response = await ask_llm(messages, tools=tools, tool_choice=tool_choice)
         message = response.choices[0].message
         if not message.tool_calls:
             return message.content or "Sorry, I couldn't prepare a response."
