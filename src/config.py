@@ -10,6 +10,9 @@ BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY")
 ALLOWED_USER_ID: int = int(os.getenv("ALLOWED_USER_ID"))
 OPENAI_MODEL: str = "gpt-5-mini"
+OPENAI_TRANSCRIPTION_MODEL: str = os.getenv(
+    "OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe"
+)
 INTENT_ROUTER_MODEL: str = os.getenv("INTENT_ROUTER_MODEL", "gpt-5-mini")
 TASK_TIMEZONE: str = os.getenv("TASK_TIMEZONE", "Asia/Kolkata")
 EXPENSE_TRACKER_API_KEY: str | None = os.getenv("EXPENSE_TRACKER_API_KEY")

@@ -13,6 +13,11 @@ Powered by OpenAI, Roxy retains conversation history in a local SQLite
 database so she can respond with continuity across messages. Her voice,
 instructions, and model can be tailored to suit the way you work.
 
+Roxy also understands Telegram voice notes. She transcribes them internally and
+handles them exactly like typed messages, including Hindi, English, Hinglish,
+reminders, and expense requests. The transcript is not automatically shown in
+her reply.
+
 ## Requirements
 
 - [Python](https://www.python.org/) 3.14 or later
@@ -49,6 +54,7 @@ TASK_TIMEZONE=Asia/Kolkata
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | Create a bot through [@BotFather](https://t.me/BotFather) on Telegram. |
 | `OPENAI_API_KEY` | Create an API key in the [OpenAI Platform](https://platform.openai.com/api-keys). |
+| `OPENAI_TRANSCRIPTION_MODEL` | Optional OpenAI model for Telegram voice-note transcription. Defaults to `gpt-4o-mini-transcribe`. |
 | `ALLOWED_USER_ID` | Your numeric Telegram user ID. You can retrieve it with [@userinfobot](https://t.me/userinfobot). |
 | `TASK_TIMEZONE` | IANA timezone used when a reminder has no timezone. Defaults to `Asia/Kolkata`. |
 

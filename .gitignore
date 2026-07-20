@@ -3,3 +3,4 @@ venv/
 .env
 roxy.db
 __pycache__/
+*.egg-info

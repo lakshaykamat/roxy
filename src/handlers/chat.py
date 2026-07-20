@@ -18,9 +18,11 @@ from src.utils.debounce import DebounceCoordinator, PendingMessage
 from src.utils.errors import log_async_error, try_async
 from src.utils import history
 from src.utils.llm import ask_llm, classify_tool_intent
+from src.utils.transcription import transcribe_voice
 
 logger = logging.getLogger(__name__)
 FALLBACK_REPLY = "Sorry, I hit a snag. Please send that again in a moment."
+EMPTY_TRANSCRIPT_REPLY = "I couldn't understand that voice note. Please try again."
 
 
 def build_photo_message(
@@ -74,22 +76,58 @@ async def photo_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await try_async(process_photo, handle_error=send_fallback)
 
 
-async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(
-        "Message from chat %s: %s", update.effective_chat.id, update.message.text
-    )
-    message_id = history.add("user", update.message.text)
+async def submit_chat_text(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, text: str
+) -> None:
+    chat_id = update.effective_chat.id
+    logger.info("Received text message in chat %s", chat_id)
+    message_id = history.add("user", text)
 
     debounce_coordinator.submit(
-        update.effective_chat.id,
-        PendingMessage(message_id, update.message.text, context.bot.send_message),
+        chat_id,
+        PendingMessage(message_id, text, context.bot.send_message),
     )
     await log_async_error(
         lambda: update.message.chat.send_action("typing"),
         logger=logger,
         error_message="Unable to send typing action for chat %s",
-        error_args=(update.effective_chat.id,),
+        error_args=(chat_id,),
     )
+
+
+async def voice_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    voice = update.message.voice
+
+    await log_async_error(
+        lambda: update.message.chat.send_action("record_voice"),
+        logger=logger,
+        error_message="Unable to send record_voice action for chat %s",
+        error_args=(chat_id,),
+    )
+
+    async def process_voice() -> None:
+        telegram_file = await context.bot.get_file(voice.file_id)
+        transcript = await transcribe_voice(telegram_file)
+        if not transcript.strip():
+            await context.bot.send_message(chat_id, EMPTY_TRANSCRIPT_REPLY)
+            return
+        await submit_chat_text(update, context, transcript)
+
+    async def send_fallback(_: BaseException) -> None:
+        logger.exception("Unable to process voice message for chat %s", chat_id)
+        await log_async_error(
+            lambda: context.bot.send_message(chat_id, FALLBACK_REPLY),
+            logger=logger,
+            error_message="Unable to send fallback reply for voice message in chat %s",
+            error_args=(chat_id,),
+        )
+
+    await try_async(process_voice, handle_error=send_fallback)
+
+
+async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await submit_chat_text(update, context, update.message.text)
 
 
 async def process_burst(chat_id: int, pending_messages: list[PendingMessage]) -> None:

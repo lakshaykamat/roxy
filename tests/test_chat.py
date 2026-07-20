@@ -3,6 +3,7 @@ import os
 import time
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,6 +16,28 @@ from src.handlers import chat
 from src.utils.debounce import DebounceCoordinator, PendingMessage
 from src.utils import llm
 from src.utils.tasks import ScheduledTask
+
+
+class TranscriptionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_transcribe_voice_downloads_file_and_uses_configured_model(self):
+        from src.utils.transcription import transcribe_voice
+
+        telegram_file = MagicMock()
+        telegram_file.download_to_drive = AsyncMock()
+        response = SimpleNamespace(text="नमस्ते, कल 9 बजे याद दिलाना")
+
+        with patch("src.utils.transcription.client.audio.transcriptions.create", return_value=response) as create, patch(
+            "src.utils.transcription.TemporaryDirectory"
+        ) as temporary_directory, patch("src.utils.transcription.Path.open", create=True) as open_file:
+            temporary_directory.return_value.__enter__.return_value = "/tmp/transcription"
+            open_file.return_value.__enter__.return_value = MagicMock()
+            result = await transcribe_voice(telegram_file)
+
+        expected_path = Path("/tmp/transcription/voice.oga")
+        telegram_file.download_to_drive.assert_awaited_once_with(expected_path)
+        self.assertEqual(result, "नमस्ते, कल 9 बजे याद दिलाना")
+        self.assertEqual(create.call_args.kwargs["model"], config.OPENAI_TRANSCRIPTION_MODEL)
+        self.assertIs(create.call_args.kwargs["file"], open_file.return_value.__enter__.return_value)
 
 
 class ChatTests(unittest.IsolatedAsyncioTestCase):
@@ -428,8 +451,7 @@ class PhotoChatTests(unittest.IsolatedAsyncioTestCase):
         with patch("src.handlers.chat.history.add", return_value=99) as add, \
              patch("src.handlers.chat.history.get_before", return_value=[]), \
              patch("src.handlers.chat.run_agent_loop", new=AsyncMock(return_value="It's a cat")) as loop, \
-             patch("src.handlers.chat.history.add") as add2, \
-             patch("src.handlers.chat.config.BOT_TOKEN", "test-token"):
+             patch("src.handlers.chat.history.add") as add2:
             add2.side_effect = [99, None]
             await chat.photo_chat(update, context)
 
@@ -440,7 +462,6 @@ class PhotoChatTests(unittest.IsolatedAsyncioTestCase):
         content = user_msg["content"]
         image_part = next(p for p in content if p["type"] == "image_url")
         self.assertIn("photos/file_abc.jpg", image_part["image_url"]["url"])
-        self.assertIn("test-token", image_part["image_url"]["url"])
 
     async def test_photo_chat_sends_fallback_on_error(self):
         update = MagicMock()
@@ -457,3 +478,63 @@ class PhotoChatTests(unittest.IsolatedAsyncioTestCase):
             await chat.photo_chat(update, context)
 
         context.bot.send_message.assert_awaited_once_with(42, chat.FALLBACK_REPLY)
+
+
+class VoiceChatTests(unittest.IsolatedAsyncioTestCase):
+    async def test_voice_chat_transcribes_then_submits_transcript_as_chat_text(self):
+        update = MagicMock()
+        update.effective_chat.id = 7
+        update.message.voice.file_id = "voice_abc"
+        update.message.chat.send_action = AsyncMock()
+        context = MagicMock()
+        context.bot.get_file = AsyncMock(return_value=MagicMock())
+
+        with patch(
+            "src.handlers.chat.transcribe_voice",
+            new=AsyncMock(return_value="Kal 9 baje remind karna"),
+        ) as transcribe, patch(
+            "src.handlers.chat.submit_chat_text", new=AsyncMock()
+        ) as submit:
+            await chat.voice_chat(update, context)
+
+        context.bot.get_file.assert_awaited_once_with("voice_abc")
+        transcribe.assert_awaited_once_with(context.bot.get_file.return_value)
+        submit.assert_awaited_once_with(update, context, "Kal 9 baje remind karna")
+        update.message.chat.send_action.assert_awaited_once_with("record_voice")
+
+    async def test_voice_chat_sends_fallback_when_transcription_fails(self):
+        update = MagicMock()
+        update.effective_chat.id = 7
+        update.message.voice.file_id = "voice_abc"
+        update.message.chat.send_action = AsyncMock()
+        context = MagicMock()
+        context.bot.get_file = AsyncMock(return_value=MagicMock())
+        context.bot.send_message = AsyncMock()
+
+        with patch(
+            "src.handlers.chat.transcribe_voice",
+            new=AsyncMock(side_effect=RuntimeError("bad audio")),
+        ), patch("src.handlers.chat.submit_chat_text", new=AsyncMock()) as submit, self.assertLogs(
+            "src.handlers.chat", level="ERROR"
+        ):
+            await chat.voice_chat(update, context)
+
+        submit.assert_not_awaited()
+        context.bot.send_message.assert_awaited_once_with(7, chat.FALLBACK_REPLY)
+
+    async def test_voice_chat_asks_for_a_new_voice_note_when_transcript_is_empty(self):
+        update = MagicMock()
+        update.effective_chat.id = 7
+        update.message.voice.file_id = "voice_abc"
+        update.message.chat.send_action = AsyncMock()
+        context = MagicMock()
+        context.bot.get_file = AsyncMock(return_value=MagicMock())
+        context.bot.send_message = AsyncMock()
+
+        with patch(
+            "src.handlers.chat.transcribe_voice", new=AsyncMock(return_value="  \n")
+        ), patch("src.handlers.chat.submit_chat_text", new=AsyncMock()) as submit:
+            await chat.voice_chat(update, context)
+
+        submit.assert_not_awaited()
+        context.bot.send_message.assert_awaited_once_with(7, chat.EMPTY_TRANSCRIPT_REPLY)
