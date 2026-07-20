@@ -54,7 +54,7 @@ async def photo_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     async def process_photo() -> None:
         file = await context.bot.get_file(photo.file_id)
-        image_url = f"https://api.telegram.org/file/bot{config.BOT_TOKEN}/{file.file_path}"
+        image_url = file.file_path
         history_before = history.get_before(message_id)
         messages = build_photo_message(history_before, image_url, caption)
         reply = await run_agent_loop(messages)
