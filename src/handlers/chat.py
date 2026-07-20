@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import inspect
 import json
 import logging
@@ -21,6 +22,58 @@ from src.utils.llm import ask_llm, classify_tool_intent
 
 logger = logging.getLogger(__name__)
 FALLBACK_REPLY = "Sorry, I hit a snag. Please send that again in a moment."
+
+
+def build_photo_message(
+    history_before: list[dict], b64_jpeg: str, caption: str
+) -> list[object]:
+    image_part = {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_jpeg}"}}
+    content: list[object] = []
+    if caption:
+        content.append({"type": "text", "text": caption})
+    content.append(image_part)
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        *history_before,
+        {"role": "user", "content": content},
+    ]
+
+
+async def photo_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    caption = update.message.caption or ""
+    photo = update.message.photo[-1]
+    history_text = f"[Image{': ' + caption if caption else ''}]"
+    message_id = history.add("user", history_text)
+
+    await log_async_error(
+        lambda: update.message.chat.send_action("upload_photo"),
+        logger=logger,
+        error_message="Unable to send upload_photo action for chat %s",
+        error_args=(chat_id,),
+    )
+
+    async def process_photo() -> None:
+        file = await context.bot.get_file(photo.file_id)
+        photo_bytes = await file.download_as_bytearray()
+        b64 = base64.b64encode(photo_bytes).decode()
+        history_before = history.get_before(message_id)
+        messages = build_photo_message(history_before, b64, caption)
+        reply = await run_agent_loop(messages)
+        history.add("assistant", reply)
+        await context.bot.send_message(chat_id, reply)
+        logger.info("Replied to photo in chat %s", chat_id)
+
+    async def send_fallback(_: BaseException) -> None:
+        logger.exception("Unable to process photo for chat %s", chat_id)
+        await log_async_error(
+            lambda: context.bot.send_message(chat_id, FALLBACK_REPLY),
+            logger=logger,
+            error_message="Unable to send fallback reply for photo in chat %s",
+            error_args=(chat_id,),
+        )
+
+    await try_async(process_photo, handle_error=send_fallback)
 
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
