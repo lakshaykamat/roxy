@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import logging
 from datetime import datetime
@@ -19,6 +20,9 @@ FALLBACK_REPLY = "Sorry, I hit a snag. Please send that again in a moment."
 
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(
+        "Message from chat %s: %s", update.effective_chat.id, update.message.text
+    )
     message_id = history.add("user", update.message.text)
 
     debounce_coordinator.submit(
@@ -40,6 +44,7 @@ async def process_burst(chat_id: int, pending_messages: list[PendingMessage]) ->
         reply = await run_agent_loop(build_burst_messages(pending_messages))
         history.add("assistant", reply)
         await send_reply(chat_id, reply)
+        logger.info("Replied to chat %s: %s", chat_id, reply)
 
     async def send_fallback(_: BaseException) -> None:
         logger.exception("Unable to process chat burst for chat %s", chat_id)
@@ -78,6 +83,8 @@ async def run_agent_loop(messages: list[object]) -> str:
         messages.append(message)
         for tool_call in message.tool_calls:
             result = execute_tool_call(tool_call.function.name, tool_call.function.arguments)
+            if inspect.isawaitable(result):
+                result = await result
             messages.append(
                 {
                     "role": "tool",
@@ -86,4 +93,4 @@ async def run_agent_loop(messages: list[object]) -> str:
                 }
             )
 
-    return "I couldn't finish setting that reminder. Please try again with one clear schedule."
+    return "I couldn't finish that just now. Please try again in a moment."
