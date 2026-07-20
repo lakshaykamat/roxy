@@ -17,7 +17,7 @@ class AppTests(unittest.TestCase):
         result = app.create_telegram_application()
 
         self.assertIs(result, application)
-        self.assertEqual(application.add_handler.call_count, 6)
+        self.assertEqual(application.add_handler.call_count, 7)
         registered_handlers = [
             call.args[0] for call in application.add_handler.call_args_list
         ]

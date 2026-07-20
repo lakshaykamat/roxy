@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 
 from src.config import ALLOWED_USER_ID, BOT_TOKEN
-from src.handlers.chat import chat
+from src.handlers.chat import chat, photo_chat
 from src.handlers.commands import (
     TASKS_BUTTON_TEXT,
     complete_task_callback,
@@ -49,6 +49,9 @@ def create_telegram_application() -> Application:
     )
     application.add_handler(
         CallbackQueryHandler(allowed_only(complete_task_callback), pattern=r"^done:")
+    )
+    application.add_handler(
+        MessageHandler(filters.PHOTO, allowed_only(photo_chat))
     )
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, allowed_only(chat))
