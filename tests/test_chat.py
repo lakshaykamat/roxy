@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 os.environ.setdefault("ALLOWED_USER_ID", "1")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
@@ -28,16 +28,28 @@ class TranscriptionTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("src.utils.transcription.client.audio.transcriptions.create", return_value=response) as create, patch(
             "src.utils.transcription.TemporaryDirectory"
-        ) as temporary_directory, patch("src.utils.transcription.Path.open", create=True) as open_file:
+        ) as temporary_directory, patch("src.utils.transcription.Path.open", create=True) as open_file, patch(
+            "src.utils.transcription.logger"
+        ) as logger:
             temporary_directory.return_value.__enter__.return_value = "/tmp/transcription"
             open_file.return_value.__enter__.return_value = MagicMock()
             result = await transcribe_voice(telegram_file)
 
-        expected_path = Path("/tmp/transcription/voice.oga")
+        expected_path = Path("/tmp/transcription/voice.ogg")
         telegram_file.download_to_drive.assert_awaited_once_with(expected_path)
         self.assertEqual(result, "नमस्ते, कल 9 बजे याद दिलाना")
         self.assertEqual(create.call_args.kwargs["model"], config.OPENAI_TRANSCRIPTION_MODEL)
         self.assertIs(create.call_args.kwargs["file"], open_file.return_value.__enter__.return_value)
+        logger.info.assert_has_calls(
+            [
+                call("Downloading voice message for transcription"),
+                call(
+                    "Submitting voice message for transcription with model %s",
+                    config.OPENAI_TRANSCRIPTION_MODEL,
+                ),
+                call("Voice message transcription completed"),
+            ]
+        )
 
 
 class ChatTests(unittest.IsolatedAsyncioTestCase):
@@ -379,6 +391,48 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             reply = await chat.run_agent_loop([{"role": "system", "content": "test"}])
 
         self.assertEqual(reply, "Done — I'll remind you.")
+
+    async def test_agent_loop_keeps_selected_tools_after_a_tool_result(self):
+        reminder_tools = [{"type": "function", "function": {"name": "manage_reminders"}}]
+        list_call = SimpleNamespace(
+            id="call_1",
+            function=SimpleNamespace(name="manage_reminders", arguments='{"action":"list"}'),
+        )
+        remove_call = SimpleNamespace(
+            id="call_2",
+            function=SimpleNamespace(
+                name="manage_reminders", arguments='{"action":"remove","task_ids":[55]}'
+            ),
+        )
+        responses = [
+            SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[list_call]))]
+            ),
+            SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[remove_call]))]
+            ),
+            SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="Removed it.", tool_calls=None))]
+            ),
+        ]
+
+        with patch(
+            "src.handlers.chat.select_agent_tools",
+            new=AsyncMock(return_value=(reminder_tools, "required")),
+        ) as select_tools, patch(
+            "src.handlers.chat.ask_llm", new=AsyncMock(side_effect=responses)
+        ) as ask_llm, patch(
+            "src.handlers.chat.execute_tool_call", return_value={"ok": True}
+        ):
+            reply = await chat.run_agent_loop([{"role": "user", "content": "Delete lunch"}])
+
+        self.assertEqual(reply, "Removed it.")
+        select_tools.assert_awaited_once()
+        self.assertEqual(ask_llm.await_count, 3)
+        for index, call_args in enumerate(ask_llm.await_args_list):
+            self.assertEqual(call_args.kwargs["tools"], reminder_tools)
+            expected_tool_choice = "required" if index == 0 else None
+            self.assertEqual(call_args.kwargs["tool_choice"], expected_tool_choice)
 
     async def test_agent_loop_stops_after_tool_call_limit(self):
         tool_call = SimpleNamespace(

@@ -164,11 +164,11 @@ def build_burst_messages(pending_messages: list[PendingMessage]) -> list[object]
 
 
 async def select_agent_tools(messages: list[object]) -> tuple[list[object] | None, str | None]:
-    if not messages or not isinstance(messages[-1], dict):
-        return None, None
-
-    latest_message = messages[-1]
-    if latest_message.get("role") != "user":
+    if (
+        not messages
+        or not isinstance(messages[-1], dict)
+        or messages[-1].get("role") != "user"
+    ):
         return None, None
 
     intent, requires_tool = await classify_tool_intent(messages, available_tool_intents())
@@ -186,9 +186,10 @@ debounce_coordinator = DebounceCoordinator(config.CHAT_DEBOUNCE_SECONDS, process
 
 
 async def run_agent_loop(messages: list[object]) -> str:
+    tools, tool_choice = await select_agent_tools(messages)
     for _ in range(config.MAX_TOOL_CALL_ROUNDS):
-        tools, tool_choice = await select_agent_tools(messages)
         response = await ask_llm(messages, tools=tools, tool_choice=tool_choice)
+        tool_choice = None
         message = response.choices[0].message
         if not message.tool_calls:
             return message.content or "Sorry, I couldn't prepare a response."

@@ -45,6 +45,10 @@ def add(role: str, content: str) -> int:
     return cursor.lastrowid
 
 
+def _messages_from_rows(rows: list[sqlite3.Row]) -> list[dict[str, str]]:
+    return [{"role": role, "content": content} for role, content in reversed(rows)]
+
+
 def get() -> list[dict[str, str]]:
     with database_connection() as connection:
         rows = connection.execute(
@@ -52,7 +56,7 @@ def get() -> list[dict[str, str]]:
             (config.MAX_MESSAGES,),
         ).fetchall()
 
-    return [{"role": role, "content": content} for role, content in reversed(rows)]
+    return _messages_from_rows(rows)
 
 
 def get_before(message_id: int) -> list[dict[str, str]]:
@@ -62,4 +66,4 @@ def get_before(message_id: int) -> list[dict[str, str]]:
             (message_id, config.MAX_MESSAGES),
         ).fetchall()
 
-    return [{"role": role, "content": content} for role, content in reversed(rows)]
+    return _messages_from_rows(rows)
