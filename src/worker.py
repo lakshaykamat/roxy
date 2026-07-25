@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import sqlite3
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from telegram import Bot
 from telegram.error import NetworkError, RetryAfter, TelegramError, TimedOut
@@ -10,6 +10,7 @@ from src.config import ALLOWED_USER_ID, BOT_TOKEN
 from src.prompts.system import SYSTEM_PROMPT
 from src.utils.errors import try_async
 from src.utils import tasks
+from src.utils import memory
 from src.utils.llm import ask_llm
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,7 @@ class ReminderWorker:
     def __init__(self, bot: Bot, poll_interval_seconds: int = 10):
         self.bot = bot
         self.poll_interval_seconds = poll_interval_seconds
+        self.last_maintenance_date: str | None = None
 
     async def generate_reminder_message(self, reminder: tasks.Reminder) -> str:
         async def create_message() -> str:
@@ -57,7 +59,6 @@ class ReminderWorker:
                     chat_id=ALLOWED_USER_ID,
                     text=message,
                 )
-
                 return True
 
             async def handle_delivery_error(error: BaseException) -> bool:
@@ -103,9 +104,24 @@ class ReminderWorker:
             exception_types=sqlite3.Error,
         )
 
+    async def process_maintenance(self) -> None:
+        today = datetime.now(timezone.utc).date().isoformat()
+        if self.last_maintenance_date == today:
+            return
+
+        async def maintain() -> None:
+            memory.purge_expired_data()
+            self.last_maintenance_date = today
+
+        async def log_failure(_: BaseException) -> None:
+            logger.exception("Daily maintenance failed")
+
+        await try_async(maintain, handle_error=log_failure)
+
     async def run(self) -> None:
         logger.info("Reminder worker started")
         while True:
+            await self.process_maintenance()
             processed_reminder = await self.process_next_reminder()
             if not processed_reminder:
                 await asyncio.sleep(self.poll_interval_seconds)

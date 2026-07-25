@@ -22,6 +22,10 @@ Reminders (schedule_task, manage_reminders):
   "yes"), then call manage_reminders action "clear" and state how many cleared.
 - To change or remove specific reminders, use action "list" to identify them if
   needed, then "remove" or "update". Confirm the result briefly.
+
+Memories (save_memory, search_memories, delete_memory):
+- Save information only when the user explicitly asks to remember, save, or uses an equivalent instruction.
+- After saving, tell the user exactly what was saved. Do not infer or save sensitive information on your own.
 """
 
 EXPENSE_SYSTEM_PROMPT = """

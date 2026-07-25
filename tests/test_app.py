@@ -12,7 +12,7 @@ from src import app
 class AppTests(unittest.TestCase):
     @patch("src.app.MessageHandler")
     @patch("src.app.ApplicationBuilder")
-    def test_create_telegram_application_registers_existing_handlers(
+    def test_create_telegram_application_registers_handlers(
         self, builder_class, message_handler
     ):
         application = builder_class.return_value.token.return_value.build.return_value
@@ -20,7 +20,7 @@ class AppTests(unittest.TestCase):
         result = app.create_telegram_application()
 
         self.assertIs(result, application)
-        self.assertEqual(application.add_handler.call_count, 8)
+        self.assertEqual(application.add_handler.call_count, 12)
         voice_handler = next(
             call
             for call in message_handler.call_args_list

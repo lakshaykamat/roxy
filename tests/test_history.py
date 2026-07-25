@@ -69,3 +69,47 @@ class HistoryTests(unittest.TestCase):
             messages = history.get()
 
         self.assertEqual(messages, [{"role": "user", "content": "second"}])
+
+    def test_get_excludes_expired_messages(self):
+        history.add("user", "expired")
+        history.add("user", "current")
+        with history.database_connection() as connection:
+            connection.execute(
+                "UPDATE messages SET expires_at = ? WHERE content = ?",
+                ("2000-01-01T00:00:00+00:00", "expired"),
+            )
+
+        self.assertEqual(history.get(), [{"role": "user", "content": "current"}])
+
+    def test_get_before_excludes_expired_messages(self):
+        history.add("user", "expired")
+        current_id = history.add("user", "current")
+        with history.database_connection() as connection:
+            connection.execute(
+                "UPDATE messages SET expires_at = ? WHERE content = ?",
+                ("2000-01-01T00:00:00+00:00", "expired"),
+            )
+
+        self.assertEqual(history.get_before(current_id), [])
+
+    def test_schema_migration_sets_expiry_for_existing_messages(self):
+        import sqlite3
+
+        connection = sqlite3.connect(self.database_path)
+        connection.execute(
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY, role TEXT NOT NULL, "
+            "content TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        connection.execute(
+            "INSERT INTO messages (role, content, created_at) VALUES (?, ?, ?)",
+            ("user", "legacy", "2026-01-01 00:00:00"),
+        )
+        connection.commit()
+        connection.close()
+
+        with history.database_connection() as migrated:
+            expires_at = migrated.execute(
+                "SELECT expires_at FROM messages WHERE content = ?", ("legacy",)
+            ).fetchone()["expires_at"]
+
+        self.assertEqual(expires_at, "2026-04-01T00:00:00+00:00")

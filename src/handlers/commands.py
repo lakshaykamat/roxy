@@ -1,3 +1,5 @@
+import io
+import json
 import logging
 import re
 
@@ -5,6 +7,7 @@ from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from zoneinfo import ZoneInfo
 
+from src.utils import memory
 from src.utils import tasks
 from src.utils.errors import log_async_error, try_catch
 
@@ -125,3 +128,50 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Task {task_id} marked complete.")
     else:
         await update.message.reply_text(f"I couldn't find an active task with ID {task_id}.")
+
+
+def memory_list_response() -> str:
+    items = memory.list_memories()
+    if not items:
+        return "You don't have any saved memories."
+    lines = [f"{item.id}. {item.content}" for item in items]
+    return "\n".join(["Your saved memories:", *lines])
+
+
+async def list_memories(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(memory_list_response())
+
+
+async def forget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if len(context.args) != 1 or not context.args[0].isdigit():
+        await update.message.reply_text("Use /forget <memory id>, for example /forget 3.")
+        return
+    memory_id = int(context.args[0])
+    response = (
+        "Memory forgotten."
+        if memory.delete_memory(memory_id)
+        else "I couldn't find that memory."
+    )
+    await update.message.reply_text(response)
+
+
+async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    payload = json.dumps(memory.export_local_data(), ensure_ascii=False, indent=2)
+    document = io.BytesIO(payload.encode("utf-8"))
+    document.name = "roxy-data-export.json"
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=document,
+        filename="roxy-data-export.json",
+    )
+
+
+def delete_data_response(arguments: list[str]) -> str:
+    if arguments != ["CONFIRM"]:
+        return "This deletes Roxy's local messages, memories, and reminders. Use /delete_data CONFIRM to continue."
+    memory.delete_local_data()
+    return "Roxy's local messages, memories, and reminders have been deleted."
+
+
+async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(delete_data_response(context.args))

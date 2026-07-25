@@ -17,6 +17,7 @@ from src.tools.registry import (
 from src.utils.debounce import DebounceCoordinator, PendingMessage
 from src.utils.errors import log_async_error, try_async
 from src.utils import history
+from src.utils.memory import find_relevant_memories
 from src.utils.llm import ask_llm, classify_tool_intent
 from src.utils.transcription import transcribe_voice
 
@@ -33,11 +34,15 @@ def build_photo_message(
     if caption:
         content.append({"type": "text", "text": caption})
     content.append(image_part)
-    return [
+    context = memory_context(caption)
+    messages: list[object] = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        *history_before,
-        {"role": "user", "content": content},
     ]
+    if context:
+        messages.append({"role": "system", "content": context})
+    messages.extend(history_before)
+    messages.append({"role": "user", "content": content})
+    return messages
 
 
 async def photo_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -62,7 +67,7 @@ async def photo_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         reply = await run_agent_loop(messages)
         history.add("assistant", reply)
         await context.bot.send_message(chat_id, reply)
-        logger.info("Replied to photo in chat %s", chat_id)
+        logger.info("Photo response sent for chat %s", chat_id)
 
     async def send_fallback(_: BaseException) -> None:
         logger.exception("Unable to process photo for chat %s", chat_id)
@@ -137,7 +142,7 @@ async def process_burst(chat_id: int, pending_messages: list[PendingMessage]) ->
         reply = await run_agent_loop(build_burst_messages(pending_messages))
         history.add("assistant", reply)
         await send_reply(chat_id, reply)
-        logger.info("Replied to chat %s: %s", chat_id, reply)
+        logger.info("Chat response sent for chat %s", chat_id)
 
     async def send_fallback(_: BaseException) -> None:
         logger.exception("Unable to process chat burst for chat %s", chat_id)
@@ -156,8 +161,10 @@ def build_burst_messages(pending_messages: list[PendingMessage]) -> list[object]
     user_message = "\n".join(message.text for message in pending_messages)
     user_message += f"\n\nCurrent time in {config.TASK_TIMEZONE}: {current_time}"
 
+    context = memory_context(user_message)
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
+        *([{"role": "system", "content": context}] if context else []),
         *history.get_before(pending_messages[0].id),
         {"role": "user", "content": user_message},
     ]
@@ -196,13 +203,12 @@ async def run_agent_loop(messages: list[object]) -> str:
 
         messages.append(message)
         for tool_call in message.tool_calls:
-            logger.info(
-                "Tool call %s(%s)", tool_call.function.name, tool_call.function.arguments
-            )
+            logger.info("Tool call started: %s", tool_call.function.name)
             result = execute_tool_call(tool_call.function.name, tool_call.function.arguments)
             if inspect.isawaitable(result):
                 result = await result
-            logger.info("Tool result %s: %s", tool_call.function.name, result)
+            succeeded = result.get("ok") if isinstance(result, dict) else False
+            logger.info("Tool call completed: %s ok=%s", tool_call.function.name, succeeded)
             messages.append(
                 {
                     "role": "tool",
@@ -212,3 +218,11 @@ async def run_agent_loop(messages: list[object]) -> str:
             )
 
     return "I couldn't finish that just now. Please try again in a moment."
+
+
+def memory_context(text: str) -> str:
+    memories = find_relevant_memories(text)
+    if not memories:
+        return ""
+    lines = (f"- [{item.id}] {item.content}" for item in memories)
+    return "Relevant user-approved memories:\n" + "\n".join(lines)

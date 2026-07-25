@@ -90,6 +90,16 @@ uv run python -m unittest discover -s tests -v
 | `/start` | Starts a conversation with Roxy. |
 | `/tasks` | Lists active reminders. |
 | `/done <id>` | Marks an active reminder complete. |
+| `/memory` | Lists saved, user-approved memories. |
+| `/forget <id>` | Deletes one saved memory. |
+| `/export_data` | Sends a JSON export of local messages, memories, and reminders. |
+| `/delete_data CONFIRM` | Permanently deletes Roxy's local messages, memories, and reminders. |
+
+## Privacy and service health
+
+Roxy only saves a memory when you explicitly ask her to remember or save it.
+`/ready` returns `503` when the bot database is unavailable; `/health` is
+liveness only.
 
 ## Scheduled reminders
 

@@ -1,7 +1,7 @@
 from collections.abc import Awaitable, Callable
 
 from src import config
-from src.tools import expenses, manage_tasks, schedule_task
+from src.tools import expenses, manage_tasks, schedule_task, memories
 
 # Executors return a result dict, or a coroutine resolving to one (async tools).
 ToolResult = dict[str, object]
@@ -10,10 +10,14 @@ ToolExecutor = Callable[[str], ToolResult | Awaitable[ToolResult]]
 TOOL_DEFINITIONS = [
     schedule_task.DEFINITION,
     manage_tasks.DEFINITION,
+    *memories.DEFINITIONS,
 ]
 TOOL_EXECUTORS: dict[str, ToolExecutor] = {
     "schedule_task": schedule_task.execute,
     "manage_reminders": manage_tasks.execute,
+    "save_memory": memories.save_memory,
+    "search_memories": memories.search_memories,
+    "delete_memory": memories.delete_memory,
 }
 
 TOOL_INTENTS = {
@@ -32,6 +36,10 @@ TOOL_INTENTS = {
                 "delete_expense",
             }
         ),
+    },
+    "memories": {
+        "description": "Save, search, or delete user-approved memories.",
+        "tool_names": frozenset({"save_memory", "search_memories", "delete_memory"}),
     },
 }
 
