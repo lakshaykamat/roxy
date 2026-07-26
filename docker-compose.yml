@@ -7,7 +7,7 @@ services:
     environment:
       DATABASE_PATH: /app/data/roxy.db
     ports:
-      - "8000:8000"
+      - "8888:8888"
     volumes:
       - roxy_data:/app/data
     init: true

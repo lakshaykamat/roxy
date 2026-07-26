@@ -38,8 +38,9 @@ class AppTests(unittest.TestCase):
 
     @patch("src.app.uvicorn.Server")
     @patch("src.app.create_telegram_application")
+    @patch("src.app.heartbeats.record_heartbeat")
     def test_run_logs_and_reraises_lifecycle_failures(
-        self, create_application, server_class
+        self, record_heartbeat, create_application, server_class
     ):
         telegram_app = MagicMock()
         telegram_app.initialize = AsyncMock()
@@ -66,6 +67,8 @@ class AppTests(unittest.TestCase):
         telegram_app.updater.stop.assert_awaited_once()
         telegram_app.stop.assert_awaited_once()
         telegram_app.shutdown.assert_awaited_once()
+        record_heartbeat.assert_called_with("bot")
+        self.assertEqual(server_class.call_args.args[0].port, app.config.HTTP_PORT)
         self.assertTrue(
             any(
                 entry.startswith("ERROR:src.app:Application lifecycle failed")

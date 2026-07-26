@@ -48,6 +48,8 @@ TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
 OPENAI_API_KEY=your_openai_api_key_here
 ALLOWED_USER_ID=123456789
 TASK_TIMEZONE=Asia/Kolkata
+DASHBOARD_PASSWORD=choose_a_long_unique_password
+DASHBOARD_SESSION_SECRET=generate_a_long_random_secret
 ```
 
 | Variable | Description |
@@ -65,11 +67,26 @@ uv run python main.py
 ```
 
 While the bot is polling, its health endpoint is available at
-`http://127.0.0.1:8000/health`:
+`http://127.0.0.1:8888/health`:
 
 ```json
 {"status": "ok"}
 ```
+
+## Dashboard
+
+Roxy provides a read-only dashboard at http://127.0.0.1:8888/. Set
+`DASHBOARD_PASSWORD` and a long random `DASHBOARD_SESSION_SECRET` in `.env`,
+then sign in through `/login`.
+
+For network access, terminate HTTPS at a reverse proxy and set
+`DASHBOARD_SECURE_COOKIES=true`. Do not expose the dashboard directly to the
+internet over plain HTTP. The dashboard shows aggregate activity and
+operational state only; it never displays chat or memory contents and cannot
+change Roxy data.
+
+Health and readiness endpoints remain public for orchestration. Restrict their
+network access at your deployment boundary when appropriate.
 
 ## Development
 
@@ -225,7 +242,7 @@ Check its health and logs:
 
 ```bash
 docker compose ps
-curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8888/health
 docker compose logs -f roxy
 ```
 

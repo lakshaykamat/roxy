@@ -14,6 +14,7 @@ from telegram.ext import (
     filters,
 )
 
+from src import config
 from src.config import ALLOWED_USER_ID, BOT_TOKEN
 from src.handlers.chat import chat, photo_chat, voice_chat
 from src.handlers.commands import (
@@ -28,6 +29,7 @@ from src.handlers.commands import (
     start,
 )
 from src.utils.errors import try_async
+from src.utils import heartbeats
 from src.web import app as web_app
 from src.services import expense_tracker_client
 
@@ -135,19 +137,38 @@ async def _shutdown_application_resources() -> None:
         await client.aclose()
 
 
+async def _record_bot_heartbeat() -> None:
+    async def record() -> None:
+        heartbeats.record_heartbeat("bot")
+
+    async def log_failure(_: BaseException) -> None:
+        logger.exception("Unable to record bot heartbeat")
+
+    await try_async(record, handle_error=log_failure)
+
+
+async def _refresh_bot_heartbeat() -> None:
+    while True:
+        await _record_bot_heartbeat()
+        await asyncio.sleep(config.HEARTBEAT_INTERVAL_SECONDS)
+
+
 async def run() -> None:
     logger.info("Starting application")
     telegram_app: Application | None = None
     telegram_started = False
+    heartbeat_task: asyncio.Task[None] | None = None
 
     async def run_application() -> None:
-        nonlocal telegram_app, telegram_started
+        nonlocal telegram_app, telegram_started, heartbeat_task
         telegram_app = create_telegram_application()
         server = uvicorn.Server(
-            uvicorn.Config(web_app, host="0.0.0.0", port=8000, workers=1)
+            uvicorn.Config(web_app, host="0.0.0.0", port=config.HTTP_PORT, workers=1)
         )
         await _start_telegram_polling(telegram_app)
         telegram_started = True
+        await _record_bot_heartbeat()
+        heartbeat_task = asyncio.create_task(_refresh_bot_heartbeat())
         await _serve_http(server)
 
     async def log_lifecycle_failure(error: BaseException) -> None:
@@ -155,6 +176,9 @@ async def run() -> None:
         raise error
 
     async def shutdown_application() -> None:
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
         if telegram_app is not None and telegram_started:
             await _shutdown_telegram_application(
                 telegram_app,

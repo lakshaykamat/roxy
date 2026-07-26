@@ -19,7 +19,7 @@ docker run --detach \
     --name "$CONTAINER_NAME" \
     --env-file .env \
     --env DATABASE_PATH=/app/data/roxy.db \
-    --publish 8000:8000 \
+    --publish 8888:8888 \
     --volume "$DATA_VOLUME:/app/data" \
     --init \
     --restart unless-stopped \

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard unavailable · Roxy</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { theme: { extend: { colors: { ink: '#172033', cloud: '#f7f8fc', line: '#e7eaf1', violet: '#6750a4' } } } };
+  </script>
+</head>
+<body class="min-h-screen bg-cloud font-sans text-ink antialiased">
+  <main class="flex min-h-screen items-center justify-center px-5 py-10">
+    <section class="w-full max-w-md rounded-2xl border border-line bg-white p-8 text-center shadow-sm sm:p-10" aria-labelledby="page-title">
+      <span class="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-amber-50 text-xl text-amber-700">!</span>
+      <p class="mt-5 text-sm font-semibold tracking-wide text-violet">ROXY</p>
+      <h1 id="page-title" class="mt-2 text-2xl font-semibold tracking-tight">Dashboard unavailable</h1>
+      <p class="mt-3 text-sm leading-6 text-slate-600">Roxy can’t reach its local data store right now. Check the service, then refresh this page.</p>
+      <a class="mt-7 inline-flex rounded-lg bg-violet px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-violet/90 focus:outline-none focus:ring-4 focus:ring-violet/20" href="/">Try again</a>
+    </section>
+  </main>
+</body>
+</html>

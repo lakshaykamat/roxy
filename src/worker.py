@@ -9,6 +9,7 @@ from telegram.error import NetworkError, RetryAfter, TelegramError, TimedOut
 from src.config import ALLOWED_USER_ID, BOT_TOKEN
 from src.prompts.system import SYSTEM_PROMPT
 from src.utils.errors import try_async
+from src.utils import heartbeats
 from src.utils import tasks
 from src.utils import memory
 from src.utils.llm import ask_llm
@@ -105,6 +106,13 @@ class ReminderWorker:
         )
 
     async def process_maintenance(self) -> None:
+        async def record_heartbeat() -> None:
+            heartbeats.record_heartbeat("worker")
+
+        async def log_heartbeat_failure(_: BaseException) -> None:
+            logger.exception("Unable to record worker heartbeat")
+
+        await try_async(record_heartbeat, handle_error=log_heartbeat_failure)
         today = datetime.now(timezone.utc).date().isoformat()
         if self.last_maintenance_date == today:
             return

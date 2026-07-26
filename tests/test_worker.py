@@ -10,6 +10,7 @@ os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from src.utils.tasks import Reminder
+from src import worker
 from src.worker import ReminderWorker, retry_delay
 from src.prompts.system import SYSTEM_PROMPT
 
@@ -34,7 +35,8 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(processed)
         self.bot.send_message.assert_awaited_once_with(
-            chat_id=1, text="Good morning, sunshine! ☀️"
+            chat_id=worker.ALLOWED_USER_ID,
+            text="Good morning, sunshine! ☀️",
         )
         delivered.assert_called_once_with(7, "lease-token")
 
@@ -88,6 +90,14 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             processed = await self.worker.process_next_reminder()
 
         self.assertFalse(processed)
+
+    async def test_process_maintenance_records_worker_heartbeat(self):
+        with patch("src.worker.heartbeats.record_heartbeat") as record_heartbeat, patch(
+            "src.worker.memory.purge_expired_data"
+        ):
+            await self.worker.process_maintenance()
+
+        record_heartbeat.assert_called_once_with("worker")
 
     def test_retry_delay_is_bounded_exponential_backoff(self):
         self.assertEqual(retry_delay(1).total_seconds(), 60)

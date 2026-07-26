@@ -43,6 +43,15 @@ MAX_TOOL_CALL_ROUNDS = 3
 CHAT_DEBOUNCE_SECONDS = 5
 LEASE_DURATION = timedelta(minutes=5)
 MAX_DELIVERY_ATTEMPTS = 5
+HTTP_PORT = 8888
+DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
+DASHBOARD_SESSION_SECRET = os.getenv("DASHBOARD_SESSION_SECRET", "")
+DASHBOARD_SESSION_MAX_AGE_SECONDS = _positive_integer(
+    "DASHBOARD_SESSION_MAX_AGE_SECONDS", 28800
+)
+DASHBOARD_SECURE_COOKIES = os.getenv("DASHBOARD_SECURE_COOKIES", "").lower() == "true"
+HEARTBEAT_INTERVAL_SECONDS = _positive_integer("HEARTBEAT_INTERVAL_SECONDS", 30)
+HEARTBEAT_STALE_AFTER_SECONDS = _positive_integer("HEARTBEAT_STALE_AFTER_SECONDS", 90)
 
 
 def validate_configuration() -> list[str]:
@@ -53,6 +62,10 @@ def validate_configuration() -> list[str]:
         errors.append("OPENAI_API_KEY is required.")
     if _positive_integer("ALLOWED_USER_ID") == 0:
         errors.append("ALLOWED_USER_ID must be a positive integer.")
+    if not DASHBOARD_PASSWORD:
+        errors.append("DASHBOARD_PASSWORD is required.")
+    if not DASHBOARD_SESSION_SECRET:
+        errors.append("DASHBOARD_SESSION_SECRET is required.")
     return errors
 
 
