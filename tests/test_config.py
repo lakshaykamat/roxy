@@ -11,7 +11,14 @@ class ConfigTests(unittest.TestCase):
         importlib.reload(config)
 
     def test_validate_configuration_reports_missing_required_values(self):
-        with patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "", "OPENAI_API_KEY": "", "ALLOWED_USER_ID": ""}, clear=True):
+        values = {
+            "TELEGRAM_BOT_TOKEN": "",
+            "OPENAI_API_KEY": "",
+            "ALLOWED_USER_ID": "",
+            "DASHBOARD_PASSWORD": "",
+            "DASHBOARD_SESSION_SECRET": "",
+        }
+        with patch.dict(os.environ, values, clear=True):
             reloaded = importlib.reload(config)
             self.assertEqual(reloaded.validate_configuration(), ["TELEGRAM_BOT_TOKEN is required.", "OPENAI_API_KEY is required.", "ALLOWED_USER_ID must be a positive integer.", "DASHBOARD_PASSWORD is required.", "DASHBOARD_SESSION_SECRET is required."])
 

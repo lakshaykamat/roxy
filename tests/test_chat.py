@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+from telegram.error import TimedOut
+
 os.environ.setdefault("ALLOWED_USER_ID", "1")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
@@ -177,6 +179,33 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             await chat.process_burst(7, [PendingMessage(1, "Hello", send_reply)])
 
         send_reply.assert_awaited_once_with(7, chat.FALLBACK_REPLY)
+
+    async def test_process_burst_retries_transient_reply_delivery(self):
+        send_reply = AsyncMock(side_effect=[TimedOut(), "sent"])
+
+        with patch("src.handlers.chat.history.get_before", return_value=[]), patch(
+            "src.handlers.chat.history.add"
+        ) as add, patch(
+            "src.handlers.chat.run_agent_loop", new=AsyncMock(return_value="One reply")
+        ), patch("src.utils.errors.asyncio.sleep", new=AsyncMock()) as sleep:
+            await chat.process_burst(7, [PendingMessage(1, "Hello", send_reply)])
+
+        self.assertEqual(send_reply.await_count, 2)
+        sleep.assert_awaited_once_with(chat.TELEGRAM_SEND_RETRY_DELAY_SECONDS)
+        add.assert_called_once_with("assistant", "One reply")
+
+    async def test_process_burst_does_not_persist_undelivered_reply(self):
+        send_reply = AsyncMock(side_effect=TimedOut())
+
+        with patch("src.handlers.chat.history.get_before", return_value=[]), patch(
+            "src.handlers.chat.history.add"
+        ) as add, patch(
+            "src.handlers.chat.run_agent_loop", new=AsyncMock(return_value="One reply")
+        ), patch("src.utils.errors.asyncio.sleep", new=AsyncMock()):
+            await chat.process_burst(7, [PendingMessage(1, "Hello", send_reply)])
+
+        self.assertEqual(send_reply.await_count, chat.TELEGRAM_SEND_ATTEMPTS)
+        add.assert_not_called()
 
     async def test_agent_loop_does_not_block_the_event_loop_during_model_call(self):
         final_response = SimpleNamespace(content="Done", tool_calls=None)

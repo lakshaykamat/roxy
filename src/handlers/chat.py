@@ -6,6 +6,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from telegram import Update
+from telegram.error import NetworkError
 from telegram.ext import ContextTypes
 from src import config
 from src.prompts.system import SYSTEM_PROMPT
@@ -15,7 +16,7 @@ from src.tools.registry import (
     tool_definitions_for_intent,
 )
 from src.utils.debounce import DebounceCoordinator, PendingMessage
-from src.utils.errors import log_async_error, try_async
+from src.utils.errors import log_async_error, retry_async, try_async
 from src.utils import history
 from src.utils.memory import find_relevant_memories
 from src.utils.llm import ask_llm, classify_tool_intent
@@ -24,6 +25,8 @@ from src.utils.transcription import transcribe_voice
 logger = logging.getLogger(__name__)
 FALLBACK_REPLY = "Sorry, I hit a snag. Please send that again in a moment."
 EMPTY_TRANSCRIPT_REPLY = "I couldn't understand that voice note. Please try again."
+TELEGRAM_SEND_ATTEMPTS = 3
+TELEGRAM_SEND_RETRY_DELAY_SECONDS = 1
 
 
 def build_photo_message(
@@ -138,22 +141,43 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def process_burst(chat_id: int, pending_messages: list[PendingMessage]) -> None:
     send_reply = pending_messages[-1].send_reply
 
-    async def process_reply() -> None:
-        reply = await run_agent_loop(build_burst_messages(pending_messages))
-        history.add("assistant", reply)
-        await send_reply(chat_id, reply)
-        logger.info("Chat response sent for chat %s", chat_id)
+    async def create_reply() -> str:
+        return await run_agent_loop(build_burst_messages(pending_messages))
+
+    async def send_with_retry(text: str) -> object:
+        return await retry_async(
+            lambda: send_reply(chat_id, text),
+            attempts=TELEGRAM_SEND_ATTEMPTS,
+            retry_delay_seconds=TELEGRAM_SEND_RETRY_DELAY_SECONDS,
+            logger=logger,
+            error_message=f"Unable to send Telegram reply for chat {chat_id}",
+            exception_types=NetworkError,
+        )
 
     async def send_fallback(_: BaseException) -> None:
         logger.exception("Unable to process chat burst for chat %s", chat_id)
         await log_async_error(
-            lambda: send_reply(chat_id, FALLBACK_REPLY),
+            lambda: send_with_retry(FALLBACK_REPLY),
             logger=logger,
             error_message="Unable to send fallback reply for chat %s",
             error_args=(chat_id,),
         )
 
-    await try_async(process_reply, handle_error=send_fallback)
+    reply = await try_async(create_reply, handle_error=send_fallback)
+    if reply is None:
+        return
+
+    delivered = await log_async_error(
+        lambda: send_with_retry(reply),
+        logger=logger,
+        error_message="Unable to deliver chat response for chat %s",
+        error_args=(chat_id,),
+    )
+    if delivered is None:
+        return
+
+    history.add("assistant", reply)
+    logger.info("Chat response sent for chat %s", chat_id)
 
 
 def build_burst_messages(pending_messages: list[PendingMessage]) -> list[object]:

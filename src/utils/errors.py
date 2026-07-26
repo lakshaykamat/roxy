@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
@@ -44,6 +45,38 @@ async def try_async(
     finally:
         if finally_handler is not None:
             await finally_handler()
+
+
+async def retry_async(
+    operation: Callable[[], Awaitable[T]],
+    *,
+    attempts: int,
+    retry_delay_seconds: float,
+    logger: logging.Logger,
+    error_message: str,
+    exception_types: ExceptionTypes = Exception,
+) -> T:
+    if attempts < 1:
+        raise ValueError("attempts must be at least 1")
+
+    for attempt in range(1, attempts + 1):
+        try:
+            return await operation()
+        except exception_types as error:
+            if attempt == attempts:
+                raise
+            delay_seconds = retry_delay_seconds * (2 ** (attempt - 1))
+            logger.warning(
+                "%s; retrying in %s seconds (attempt %s of %s): %s",
+                error_message,
+                delay_seconds,
+                attempt,
+                attempts,
+                error,
+            )
+            await asyncio.sleep(delay_seconds)
+
+    raise RuntimeError("retry operation completed without a result")
 
 
 @contextmanager
