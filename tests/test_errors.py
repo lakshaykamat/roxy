@@ -7,7 +7,7 @@ os.environ.setdefault("ALLOWED_USER_ID", "1")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-from src.utils.errors import (
+from src.core.errors import (
     log_async_error,
     retry_async,
     try_async,
@@ -20,7 +20,7 @@ class ErrorHandlingTests(unittest.IsolatedAsyncioTestCase):
     async def test_retry_async_retries_transient_failure(self):
         operation = AsyncMock(side_effect=[OSError("network down"), "done"])
 
-        with patch("src.utils.errors.asyncio.sleep", new=AsyncMock()) as sleep:
+        with patch("src.core.errors.asyncio.sleep", new=AsyncMock()) as sleep:
             result = await retry_async(
                 operation,
                 attempts=3,

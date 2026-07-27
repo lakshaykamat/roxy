@@ -9,9 +9,9 @@ os.environ.setdefault("ALLOWED_USER_ID", "1")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-from src.utils.tasks import Reminder
-from src import worker
-from src.worker import ReminderWorker, retry_delay
+from src.reminders.repository import Reminder
+from src.reminders import worker
+from src.reminders.worker import ReminderWorker, retry_delay
 from src.prompts.system import SYSTEM_PROMPT
 
 
@@ -25,10 +25,10 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.worker = ReminderWorker(self.bot)
 
     async def test_process_next_reminder_marks_successful_delivery(self):
-        with patch("src.worker.tasks.claim_due_reminder", return_value=self.reminder), patch(
-            "src.worker.tasks.mark_reminder_delivered"
+        with patch("src.reminders.worker.repository.claim_due_reminder", return_value=self.reminder), patch(
+            "src.reminders.worker.repository.mark_reminder_delivered"
         ) as delivered, patch(
-            "src.worker.ReminderWorker.generate_reminder_message",
+            "src.reminders.worker.ReminderWorker.generate_reminder_message",
             new=AsyncMock(return_value="Good morning, sunshine! ☀️"),
         ):
             processed = await self.worker.process_next_reminder()
@@ -42,8 +42,8 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_generate_reminder_message_falls_back_to_title_when_model_fails(self):
         with patch(
-            "src.utils.llm.client.chat.completions.create", side_effect=OSError("offline")
-        ), self.assertLogs("src.worker", level="ERROR"):
+            "src.core.llm.client.chat.completions.create", side_effect=OSError("offline")
+        ), self.assertLogs("src.reminders.worker", level="ERROR"):
             message = await self.worker.generate_reminder_message(self.reminder)
 
         self.assertEqual(message, "Take vitamins")
@@ -53,7 +53,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             choices=[SimpleNamespace(message=SimpleNamespace(content="Time for your vitamins! 💊"))]
         )
         with patch(
-            "src.utils.llm.client.chat.completions.create", return_value=response
+            "src.core.llm.client.chat.completions.create", return_value=response
         ) as create:
             message = await self.worker.generate_reminder_message(self.reminder)
 
@@ -68,10 +68,10 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_process_next_reminder_schedules_retry_for_network_error(self):
         self.bot.send_message.side_effect = OSError("network down")
-        with patch("src.worker.tasks.claim_due_reminder", return_value=self.reminder), patch(
-            "src.worker.tasks.record_delivery_failure"
+        with patch("src.reminders.worker.repository.claim_due_reminder", return_value=self.reminder), patch(
+            "src.reminders.worker.repository.record_delivery_failure"
         ) as failed, patch(
-            "src.worker.ReminderWorker.generate_reminder_message",
+            "src.reminders.worker.ReminderWorker.generate_reminder_message",
             new=AsyncMock(return_value="Take vitamins"),
         ):
             await self.worker.process_next_reminder()
@@ -79,25 +79,17 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failed.call_args.args[:3], (7, "lease-token", "network down"))
 
     async def test_process_next_reminder_returns_false_when_no_reminder_is_due(self):
-        with patch("src.worker.tasks.claim_due_reminder", return_value=None):
+        with patch("src.reminders.worker.repository.claim_due_reminder", return_value=None):
             processed = await self.worker.process_next_reminder()
 
         self.assertFalse(processed)
         self.bot.send_message.assert_not_awaited()
 
     async def test_process_next_reminder_handles_database_error(self):
-        with patch("src.worker.tasks.claim_due_reminder", side_effect=sqlite3.OperationalError):
+        with patch("src.reminders.worker.repository.claim_due_reminder", side_effect=sqlite3.OperationalError):
             processed = await self.worker.process_next_reminder()
 
         self.assertFalse(processed)
-
-    async def test_process_maintenance_records_worker_heartbeat(self):
-        with patch("src.worker.heartbeats.record_heartbeat") as record_heartbeat, patch(
-            "src.worker.memory.purge_expired_data"
-        ):
-            await self.worker.process_maintenance()
-
-        record_heartbeat.assert_called_once_with("worker")
 
     def test_retry_delay_is_bounded_exponential_backoff(self):
         self.assertEqual(retry_delay(1).total_seconds(), 60)

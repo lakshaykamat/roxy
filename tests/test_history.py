@@ -9,7 +9,7 @@ os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from src import config
-from src.utils import history
+from src.conversations import history
 
 
 class HistoryTests(unittest.TestCase):

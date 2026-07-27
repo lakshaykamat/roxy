@@ -107,14 +107,21 @@ uv run python -m unittest discover -s tests -v
 | `/start` | Starts a conversation with Roxy. |
 | `/tasks` | Lists active reminders. |
 | `/done <id>` | Marks an active reminder complete. |
-| `/memory` | Lists saved, user-approved memories. |
-| `/forget <id>` | Deletes one saved memory. |
-| `/export_data` | Sends a JSON export of local messages, memories, and reminders. |
-| `/delete_data CONFIRM` | Permanently deletes Roxy's local messages, memories, and reminders. |
+| `/brain` | Lists the 20 newest active brain items. |
+| `/brain_pause` | Pauses automatic brain capture. |
+| `/brain_resume` | Resumes automatic brain capture. |
+| `/brain_archive <id>` | Archives one brain item. |
+| `/brain_delete <id>` | Permanently deletes one brain item. |
+| `/export_data` | Sends a JSON export of local messages, brain items, settings, and reminder deliveries. |
+| `/delete_data CONFIRM` | Permanently deletes Roxy's local messages, brain items, and reminder deliveries. |
 
 ## Privacy and service health
 
-Roxy only saves a memory when you explicitly ask her to remember or save it.
+Roxy automatically captures durable ideas, facts, preferences, people, projects,
+goals, decisions, references, and reflections. It does not capture casual chat,
+sensitive information, expenses, or content marked “don't save.” Use
+`/brain_pause` to pause automatic capture; direct save requests still work.
+Tasks are brain items, while their notification attempts are stored separately.
 `/ready` returns `503` when the bot database is unavailable; `/health` is
 liveness only.
 

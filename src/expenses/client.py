@@ -13,14 +13,14 @@ import logging
 import httpx
 
 from src import config
-from src.services.expense_errors import (
+from src.expenses.errors import (
     ExpenseAuthenticationError,
     ExpenseNotFoundError,
     ExpenseServiceUnavailableError,
     ExpenseTrackerError,
     ExpenseValidationError,
 )
-from src.services.expense_models import Expense, parse_expense, parse_expense_list
+from src.expenses.models import Expense, parse_expense, parse_expense_list
 
 logger = logging.getLogger(__name__)
 

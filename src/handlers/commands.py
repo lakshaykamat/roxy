@@ -7,9 +7,10 @@ from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from zoneinfo import ZoneInfo
 
-from src.utils import memory
-from src.utils import tasks
-from src.utils.errors import log_async_error, try_catch
+from src.knowledge import brain
+from src.knowledge import service as privacy
+from src.reminders import repository as tasks
+from src.core.errors import log_async_error, try_catch
 
 logger = logging.getLogger(__name__)
 
@@ -130,33 +131,60 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"I couldn't find an active task with ID {task_id}.")
 
 
-def memory_list_response() -> str:
-    items = memory.list_memories()
+def brain_list_response() -> str:
+    items = brain.list_recent_items()
     if not items:
-        return "You don't have any saved memories."
-    lines = [f"{item.id}. {item.content}" for item in items]
-    return "\n".join(["Your saved memories:", *lines])
+        return "Your brain is empty."
+    lines = ["Your newest brain items:"]
+    for item in items:
+        tags = f" ({', '.join(item.tags)})" if item.tags else ""
+        lines.append(f"{item.id}. {item.title} [{item.item_type}]{tags}\n{item.summary}")
+    return "\n".join(lines)
 
 
-async def list_memories(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(memory_list_response())
+def brain_pause_response() -> str:
+    brain.set_auto_capture_enabled(False)
+    return "Automatic brain capture is paused."
 
 
-async def forget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if len(context.args) != 1 or not context.args[0].isdigit():
-        await update.message.reply_text("Use /forget <memory id>, for example /forget 3.")
-        return
-    memory_id = int(context.args[0])
-    response = (
-        "Memory forgotten."
-        if memory.delete_memory(memory_id)
-        else "I couldn't find that memory."
-    )
-    await update.message.reply_text(response)
+def brain_resume_response() -> str:
+    brain.set_auto_capture_enabled(True)
+    return "Automatic brain capture is on."
+
+
+def brain_item_response(arguments: list[str], *, delete: bool = False) -> str:
+    if len(arguments) != 1 or not arguments[0].isdigit() or int(arguments[0]) <= 0:
+        action = "delete" if delete else "archive"
+        return f"Use /brain_{action} <brain item id>, for example /brain_{action} 3."
+    item_id = int(arguments[0])
+    changed = brain.delete_item(item_id) if delete else brain.archive_item(item_id)
+    if changed:
+        return "Brain item deleted." if delete else "Brain item archived."
+    return "I couldn't find an active brain item with that ID."
+
+
+async def list_brain(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(brain_list_response())
+
+
+async def brain_pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(brain_pause_response())
+
+
+async def brain_resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(brain_resume_response())
+
+
+async def brain_archive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(brain_item_response(context.args))
+
+
+async def brain_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(brain_item_response(context.args, delete=True))
 
 
 async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    payload = json.dumps(memory.export_local_data(), ensure_ascii=False, indent=2)
+    payload = json.dumps(privacy.export_local_data(), ensure_ascii=False, indent=2)
     document = io.BytesIO(payload.encode("utf-8"))
     document.name = "roxy-data-export.json"
     await context.bot.send_document(
@@ -168,9 +196,9 @@ async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 def delete_data_response(arguments: list[str]) -> str:
     if arguments != ["CONFIRM"]:
-        return "This deletes Roxy's local messages, memories, and reminders. Use /delete_data CONFIRM to continue."
-    memory.delete_local_data()
-    return "Roxy's local messages, memories, and reminders have been deleted."
+        return "This deletes Roxy's local messages, brain items, and reminder deliveries. Use /delete_data CONFIRM to continue."
+    privacy.delete_local_data()
+    return "Roxy's local messages, brain items, and reminder deliveries have been deleted."
 
 
 async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
 
-from src.services.expense_errors import ExpenseValidationError
+from src.expenses.errors import ExpenseValidationError
 
 OBJECT_ID_PATTERN = re.compile(r"^[0-9a-fA-F]{24}$")
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")

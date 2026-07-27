@@ -1,7 +1,7 @@
 import asyncio
 
-from src.utils.logging import configure_logging
-from src.worker import run_worker
+from src.core.logging import configure_logging
+from src.reminders.worker import run_worker
 
 
 if __name__ == "__main__":

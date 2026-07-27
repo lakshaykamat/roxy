@@ -14,19 +14,19 @@ os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from src import config
-from src.services import expense_models as models
-from src.services.expense_errors import (
+from src.expenses import models
+from src.expenses.errors import (
     ExpenseAuthenticationError,
     ExpenseNotFoundError,
     ExpenseServiceUnavailableError,
     ExpenseValidationError,
 )
-from src.services.expense_models import Expense, ExpenseCategory
-from src.services.expense_tracker_client import ExpenseTrackerClient
-from src.tools import expenses
-from src.utils import expense_state as state
-from src.utils.dates import resolve_month, resolve_relative_date
-from src.utils.expense_formatting import (
+from src.expenses.models import Expense, ExpenseCategory
+from src.expenses.client import ExpenseTrackerClient
+from src.expenses import tools as expenses
+from src.expenses import state
+from src.core.dates import resolve_month, resolve_relative_date
+from src.expenses.formatting import (
     format_amount,
     format_category_summary,
     format_expense_list,
@@ -412,7 +412,7 @@ class ToolHandlerTests(unittest.IsolatedAsyncioTestCase):
 
     def use_client(self, recorder):
         client = make_client(recorder)
-        patcher = patch("src.tools.expenses.get_client", return_value=client)
+        patcher = patch("src.expenses.tools.get_client", return_value=client)
         patcher.start()
         self.addCleanup(patcher.stop)
         return recorder
@@ -615,7 +615,7 @@ class OptionalIntegrationTests(unittest.TestCase):
         return reloaded
 
     def test_tools_are_hidden_when_not_configured(self):
-        from src.tools import registry
+        from src.agent import tool_registry as registry
 
         with patch.object(config, "EXPENSE_TRACKER_ENABLED", False):
             reloaded = self._reload(registry)
@@ -626,7 +626,7 @@ class OptionalIntegrationTests(unittest.TestCase):
         self.assertIn("schedule_task", names)  # reminders stay available
 
     def test_tools_are_registered_when_configured(self):
-        from src.tools import registry
+        from src.agent import tool_registry as registry
 
         with patch.object(config, "EXPENSE_TRACKER_ENABLED", True):
             reloaded = self._reload(registry)

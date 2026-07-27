@@ -1,23 +1,25 @@
 from collections.abc import Awaitable, Callable
 
 from src import config
-from src.tools import expenses, manage_tasks, schedule_task, memories
+from src.expenses import tools as expenses
+from src.reminders import create_tool, manage_tool
+from src.knowledge import brain_tools
 
 # Executors return a result dict, or a coroutine resolving to one (async tools).
 ToolResult = dict[str, object]
 ToolExecutor = Callable[[str], ToolResult | Awaitable[ToolResult]]
 
 TOOL_DEFINITIONS = [
-    schedule_task.DEFINITION,
-    manage_tasks.DEFINITION,
-    *memories.DEFINITIONS,
+    create_tool.DEFINITION,
+    manage_tool.DEFINITION,
+    *brain_tools.DEFINITIONS,
 ]
 TOOL_EXECUTORS: dict[str, ToolExecutor] = {
-    "schedule_task": schedule_task.execute,
-    "manage_reminders": manage_tasks.execute,
-    "save_memory": memories.save_memory,
-    "search_memories": memories.search_memories,
-    "delete_memory": memories.delete_memory,
+    "schedule_task": create_tool.execute,
+    "manage_reminders": manage_tool.execute,
+    "search_brain": brain_tools.search_brain,
+    "archive_brain_item": brain_tools.archive_brain_item,
+    "delete_brain_item": brain_tools.delete_brain_item,
 }
 
 TOOL_INTENTS = {
@@ -37,9 +39,13 @@ TOOL_INTENTS = {
             }
         ),
     },
-    "memories": {
-        "description": "Save, search, or delete user-approved memories.",
-        "tool_names": frozenset({"save_memory", "search_memories", "delete_memory"}),
+    "brain": {
+        "description": "Automatically save a durable idea, fact, preference, person, project, goal, decision, reference, or reflection.",
+        "tool_names": frozenset({"save_brain_item"}),
+    },
+    "brain_management": {
+        "description": "Search, archive, or delete an already saved brain item.",
+        "tool_names": frozenset({"search_brain", "archive_brain_item", "delete_brain_item"}),
     },
 }
 
@@ -64,7 +70,14 @@ if config.EXPENSE_TRACKER_ENABLED:
     )
 
 
-def execute_tool_call(name: str, arguments: str) -> ToolResult | Awaitable[ToolResult]:
+def execute_tool_call(
+    name: str, arguments: str, *, capture_key: str | None = None,
+    source_content: str | None = None,
+) -> ToolResult | Awaitable[ToolResult]:
+    if name == "save_brain_item":
+        return brain_tools.save_brain_item(
+            arguments, capture_key=capture_key, source_content=source_content
+        )
     executor = TOOL_EXECUTORS.get(name)
     if executor is None:
         return {"ok": False, "error": "That action is not available."}

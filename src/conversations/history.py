@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterator
 
 from src import config
-from src.utils.errors import try_catch_context
+from src.core.errors import try_catch_context
 
 logger = logging.getLogger(__name__)
 

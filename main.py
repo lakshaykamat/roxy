@@ -2,7 +2,7 @@ import asyncio
 
 from src.app import run
 from src.config import require_valid_configuration
-from src.utils.logging import configure_logging
+from src.core.logging import configure_logging
 
 
 def start() -> None:

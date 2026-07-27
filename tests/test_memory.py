@@ -5,7 +5,9 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from src import config
-from src.utils import history, memory, tasks
+from src.conversations import history
+from src.knowledge import brain, service as privacy
+from src.reminders import repository as tasks
 
 
 class MemoryTests(unittest.TestCase):
@@ -18,19 +20,22 @@ class MemoryTests(unittest.TestCase):
         config.DATABASE_PATH = self.original_path
         self.directory.cleanup()
 
-    def test_find_relevant_memories_returns_matching_memory(self):
-        memory.create_memory("My sister Anya lives in Pune.", kind="person")
-        self.assertEqual([item.content for item in memory.find_relevant_memories("How is Anya doing?")], ["My sister Anya lives in Pune."])
+    def test_brain_search_returns_matching_item(self):
+        brain.create_item("My sister Anya lives in Pune.", "Anya", "Anya lives in Pune.", "person", [], "text", "explicit")
+        self.assertEqual(
+            [item.content for item in brain.search_items("Anya")],
+            ["My sister Anya lives in Pune."],
+        )
 
     def test_delete_local_data_removes_messages_and_memories(self):
         history.add("user", "private note")
-        memory.create_memory("Private preference")
-        memory.delete_local_data()
+        brain.create_item("Private preference", "Preference", "Private preference", "preference", [], "text", "explicit")
+        privacy.delete_local_data()
         self.assertEqual(history.get(), [])
-        self.assertEqual(memory.list_memories(), [])
+        self.assertEqual(brain.list_recent_items(), [])
 
     def test_export_local_data_is_json_safe(self):
-        json.dumps(memory.export_local_data())
+        json.dumps(privacy.export_local_data())
 
     def test_export_local_data_includes_completed_tasks_and_reminders(self):
         task = tasks.create_task(
@@ -39,8 +44,8 @@ class MemoryTests(unittest.TestCase):
         )
         tasks.complete_task(task.id)
 
-        export = memory.export_local_data()
+        export = privacy.export_local_data()
 
-        self.assertEqual(export["tasks"][0]["id"], task.id)
-        self.assertEqual(export["tasks"][0]["status"], "completed")
-        self.assertEqual(export["reminders"][0]["task_id"], task.id)
+        self.assertEqual(export["brain_items"][0]["id"], task.id)
+        self.assertEqual(export["brain_items"][0]["status"], "completed")
+        self.assertEqual(export["reminder_deliveries"][0]["brain_item_id"], task.id)

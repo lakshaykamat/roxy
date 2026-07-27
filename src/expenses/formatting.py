@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from src.services.expense_models import Expense
+from src.expenses.models import Expense
 
 CURRENCY_SYMBOLS = {
     "INR": "₹",

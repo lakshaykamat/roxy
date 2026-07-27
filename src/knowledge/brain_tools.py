@@ -1,0 +1,178 @@
+import asyncio
+import json
+import logging
+import re
+import sqlite3
+
+from src.core.errors import retry_async, try_async
+from src.knowledge import brain
+
+logger = logging.getLogger(__name__)
+ITEM_TYPES = brain.BRAIN_ITEM_TYPES
+AUTOMATIC_CAPTURE_BLOCKLIST = re.compile(
+    r"\b(don't save|do not save|password|passcode|api[ _-]?key|account number|"
+    r"credit card|cvv|one-time password|\botp\b|medical|medication|diagnosed|"
+    r"health condition|diabetes|home address|live at|coordinates?|latitude|longitude)\b",
+    re.IGNORECASE,
+)
+
+DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "save_brain_item",
+            "description": "Save a durable thought to the user's second brain.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string"}, "title": {"type": "string"},
+                    "summary": {"type": "string"}, "item_type": {"type": "string", "enum": sorted(ITEM_TYPES)},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "capture_mode": {"type": "string", "enum": ["automatic", "explicit"]},
+                    "source_url": {"type": "string"},
+                },
+                "required": ["content", "title", "summary", "item_type", "tags", "capture_mode"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_brain", "description": "Search saved brain items.",
+            "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "item_type": {"type": "string", "enum": sorted(ITEM_TYPES)}}, "required": ["query"], "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "archive_brain_item", "description": "Archive one brain item.",
+            "parameters": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"], "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_brain_item", "description": "Permanently delete one brain item.",
+            "parameters": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"], "additionalProperties": False},
+        },
+    },
+]
+
+
+def _values(arguments: str) -> dict[str, object]:
+    values = json.loads(arguments)
+    if not isinstance(values, dict):
+        raise ValueError("Tool arguments must be an object.")
+    return values
+
+
+def _text(values: dict[str, object], name: str) -> str:
+    value = values.get(name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name.replace('_', ' ').capitalize()} is required.")
+    return value.strip()
+
+
+def _item_id(values: dict[str, object]) -> int:
+    item_id = values.get("id")
+    if not isinstance(item_id, int) or isinstance(item_id, bool) or item_id <= 0:
+        raise ValueError("Brain item ID must be a positive whole number.")
+    return item_id
+
+
+def _tags(values: dict[str, object]) -> list[str]:
+    raw_tags = values.get("tags")
+    if not isinstance(raw_tags, list) or not all(isinstance(tag, str) for tag in raw_tags):
+        raise ValueError("Tags must be a list of words.")
+    return list(dict.fromkeys(tag.strip().lower() for tag in raw_tags if tag.strip()))
+
+
+async def save_brain_item(
+    arguments: str, *, capture_key: str | None = None, source_content: str | None = None
+) -> dict[str, object]:
+    async def save() -> dict[str, object]:
+        values = _values(arguments)
+        capture_mode = _text(values, "capture_mode")
+        if capture_mode not in {"automatic", "explicit"}:
+            raise ValueError("Capture mode must be automatic or explicit.")
+        if capture_mode == "automatic" and not await asyncio.to_thread(brain.auto_capture_enabled):
+            return {"ok": False, "error": "Automatic brain capture is paused."}
+        if capture_mode == "automatic" and _contains_sensitive_content(values, source_content):
+            return {"ok": False, "error": "Automatic brain capture does not save sensitive content."}
+        item_type = _text(values, "item_type").lower()
+        if item_type not in ITEM_TYPES:
+            raise ValueError("Unsupported brain item type.")
+        source_url = values.get("source_url")
+        if source_url is not None and not isinstance(source_url, str):
+            raise ValueError("Source URL must be text.")
+        item = await retry_async(
+            lambda: asyncio.to_thread(
+                brain.create_item, _text(values, "content"), _text(values, "title"),
+                _text(values, "summary"), item_type, _tags(values), "text", capture_mode,
+                capture_key=capture_key if capture_mode == "automatic" else None,
+                source_url=source_url,
+            ),
+            attempts=3, retry_delay_seconds=0.1, logger=logger,
+            error_message="Unable to save brain item", exception_types=sqlite3.OperationalError,
+            should_retry=_is_busy_or_locked,
+        )
+        return {"ok": True, "brain_item": {"id": item.id, "title": item.title, "item_type": item.item_type}}
+
+    async def failure(error: BaseException) -> dict[str, object]:
+        logger.exception("Unable to save brain item")
+        return {"ok": False, "error": str(error)}
+
+    return await try_async(save, handle_error=failure)
+
+
+async def search_brain(arguments: str) -> dict[str, object]:
+    async def search() -> dict[str, object]:
+        values = _values(arguments)
+        item_type = values.get("item_type")
+        if item_type is not None and (not isinstance(item_type, str) or item_type not in ITEM_TYPES):
+            raise ValueError("Unsupported brain item type.")
+        items = await asyncio.to_thread(brain.search_items, _text(values, "query"), 20, item_type)
+        return {"ok": True, "brain_items": [{"id": item.id, "title": item.title, "summary": item.summary, "item_type": item.item_type, "tags": item.tags} for item in items]}
+
+    return await try_async(search, handle_error=_async_failure)
+
+
+async def archive_brain_item(arguments: str) -> dict[str, object]:
+    return await _change_item(arguments, brain.archive_item, "archived")
+
+
+async def delete_brain_item(arguments: str) -> dict[str, object]:
+    return await _change_item(arguments, brain.delete_item, "deleted")
+
+
+async def _change_item(arguments: str, operation: object, action: str) -> dict[str, object]:
+    async def change() -> dict[str, object]:
+        item_id = _item_id(_values(arguments))
+        changed = await asyncio.to_thread(operation, item_id)
+        return {"ok": changed, "id": item_id, "action": action}
+
+    return await try_async(change, handle_error=_async_failure)
+
+
+def _failure(error: BaseException) -> dict[str, object]:
+    logger.exception("Brain tool failed")
+    return {"ok": False, "error": str(error)}
+
+
+async def _async_failure(error: BaseException) -> dict[str, object]:
+    return _failure(error)
+
+
+def _contains_sensitive_content(
+    values: dict[str, object], source_content: str | None
+) -> bool:
+    text = " ".join(
+        [*(value for value in values.values() if isinstance(value, str)), source_content or ""]
+    )
+    has_coordinates = bool(re.search(r"\b-?\d{1,2}\.\d{3,}\s*,\s*-?\d{1,3}\.\d{3,}\b", text))
+    return has_coordinates or bool(AUTOMATIC_CAPTURE_BLOCKLIST.search(text))
+
+
+def _is_busy_or_locked(error: BaseException) -> bool:
+    return "busy" in str(error).lower() or "locked" in str(error).lower()

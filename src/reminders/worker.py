@@ -1,18 +1,16 @@
 import asyncio
 import logging
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from telegram import Bot
 from telegram.error import NetworkError, RetryAfter, TelegramError, TimedOut
 
 from src.config import ALLOWED_USER_ID, BOT_TOKEN
 from src.prompts.system import SYSTEM_PROMPT
-from src.utils.errors import try_async
-from src.utils import heartbeats
-from src.utils import tasks
-from src.utils import memory
-from src.utils.llm import ask_llm
+from src.core.errors import try_async
+from src.reminders import repository
+from src.core.llm import ask_llm
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +19,8 @@ class ReminderWorker:
     def __init__(self, bot: Bot, poll_interval_seconds: int = 10):
         self.bot = bot
         self.poll_interval_seconds = poll_interval_seconds
-        self.last_maintenance_date: str | None = None
 
-    async def generate_reminder_message(self, reminder: tasks.Reminder) -> str:
+    async def generate_reminder_message(self, reminder: repository.Reminder) -> str:
         async def create_message() -> str:
             response = await ask_llm(
                 messages=[
@@ -50,7 +47,7 @@ class ReminderWorker:
 
     async def process_next_reminder(self) -> bool:
         async def process_reminder() -> bool:
-            reminder = tasks.claim_due_reminder()
+            reminder = repository.claim_due_reminder()
             if reminder is None:
                 return False
 
@@ -64,21 +61,21 @@ class ReminderWorker:
 
             async def handle_delivery_error(error: BaseException) -> bool:
                 if isinstance(error, (NetworkError, RetryAfter, TimedOut, OSError)):
-                    retry_at = tasks.utc_now() + retry_delay(reminder.attempt_count)
-                    tasks.record_delivery_failure(
+                    retry_at = repository.utc_now() + retry_delay(reminder.attempt_count)
+                    repository.record_delivery_failure(
                         reminder.id, reminder.lease_token, str(error), retry_at
                     )
                     logger.warning(
                         "Reminder %s delivery failed and will retry: %s", reminder.id, error
                     )
                 elif isinstance(error, TelegramError):
-                    tasks.mark_reminder_failed(
+                    repository.mark_reminder_failed(
                         reminder.id, reminder.lease_token, str(error)
                     )
                     logger.error("Reminder %s cannot be delivered: %s", reminder.id, error)
                 else:
-                    retry_at = tasks.utc_now() + retry_delay(reminder.attempt_count)
-                    tasks.record_delivery_failure(
+                    retry_at = repository.utc_now() + retry_delay(reminder.attempt_count)
+                    repository.record_delivery_failure(
                         reminder.id, reminder.lease_token, str(error), retry_at
                     )
                     logger.exception(
@@ -91,7 +88,7 @@ class ReminderWorker:
                 handle_error=handle_delivery_error,
             )
             if delivered:
-                tasks.mark_reminder_delivered(reminder.id, reminder.lease_token)
+                repository.mark_reminder_delivered(reminder.id, reminder.lease_token)
                 logger.info("Delivered reminder %s", reminder.id)
             return True
 
@@ -105,31 +102,9 @@ class ReminderWorker:
             exception_types=sqlite3.Error,
         )
 
-    async def process_maintenance(self) -> None:
-        async def record_heartbeat() -> None:
-            heartbeats.record_heartbeat("worker")
-
-        async def log_heartbeat_failure(_: BaseException) -> None:
-            logger.exception("Unable to record worker heartbeat")
-
-        await try_async(record_heartbeat, handle_error=log_heartbeat_failure)
-        today = datetime.now(timezone.utc).date().isoformat()
-        if self.last_maintenance_date == today:
-            return
-
-        async def maintain() -> None:
-            memory.purge_expired_data()
-            self.last_maintenance_date = today
-
-        async def log_failure(_: BaseException) -> None:
-            logger.exception("Daily maintenance failed")
-
-        await try_async(maintain, handle_error=log_failure)
-
     async def run(self) -> None:
         logger.info("Reminder worker started")
         while True:
-            await self.process_maintenance()
             processed_reminder = await self.process_next_reminder()
             if not processed_reminder:
                 await asyncio.sleep(self.poll_interval_seconds)

@@ -20,18 +20,20 @@ from src.handlers.chat import chat, photo_chat, voice_chat
 from src.handlers.commands import (
     TASKS_BUTTON_TEXT,
     complete_task_callback,
+    brain_archive,
+    brain_delete,
+    brain_pause,
+    brain_resume,
     delete_data,
     done,
     export_data,
-    forget,
-    list_memories,
+    list_brain,
     list_tasks,
     start,
 )
-from src.utils.errors import try_async
-from src.utils import heartbeats
+from src.core.errors import try_async
 from src.web import app as web_app
-from src.services import expense_tracker_client
+from src.expenses import client as expense_tracker_client
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +62,11 @@ def create_telegram_application() -> Application:
     application.add_handler(CommandHandler("start", allowed_only(start)))
     application.add_handler(CommandHandler("tasks", allowed_only(list_tasks)))
     application.add_handler(CommandHandler("done", allowed_only(done)))
-    application.add_handler(CommandHandler("memory", allowed_only(list_memories)))
-    application.add_handler(CommandHandler("forget", allowed_only(forget)))
+    application.add_handler(CommandHandler("brain", allowed_only(list_brain)))
+    application.add_handler(CommandHandler("brain_pause", allowed_only(brain_pause)))
+    application.add_handler(CommandHandler("brain_resume", allowed_only(brain_resume)))
+    application.add_handler(CommandHandler("brain_archive", allowed_only(brain_archive)))
+    application.add_handler(CommandHandler("brain_delete", allowed_only(brain_delete)))
     application.add_handler(CommandHandler("export_data", allowed_only(export_data)))
     application.add_handler(CommandHandler("delete_data", allowed_only(delete_data)))
     application.add_handler(
@@ -145,38 +150,19 @@ async def _shutdown_application_resources() -> None:
         await client.aclose()
 
 
-async def _record_bot_heartbeat() -> None:
-    async def record() -> None:
-        heartbeats.record_heartbeat("bot")
-
-    async def log_failure(_: BaseException) -> None:
-        logger.exception("Unable to record bot heartbeat")
-
-    await try_async(record, handle_error=log_failure)
-
-
-async def _refresh_bot_heartbeat() -> None:
-    while True:
-        await _record_bot_heartbeat()
-        await asyncio.sleep(config.HEARTBEAT_INTERVAL_SECONDS)
-
-
 async def run() -> None:
     logger.info("Starting application")
     telegram_app: Application | None = None
     telegram_started = False
-    heartbeat_task: asyncio.Task[None] | None = None
 
     async def run_application() -> None:
-        nonlocal telegram_app, telegram_started, heartbeat_task
+        nonlocal telegram_app, telegram_started
         telegram_app = create_telegram_application()
         server = uvicorn.Server(
             uvicorn.Config(web_app, host="0.0.0.0", port=config.HTTP_PORT, workers=1)
         )
         await _start_telegram_polling(telegram_app)
         telegram_started = True
-        await _record_bot_heartbeat()
-        heartbeat_task = asyncio.create_task(_refresh_bot_heartbeat())
         await _serve_http(server)
 
     async def log_lifecycle_failure(error: BaseException) -> None:
@@ -184,9 +170,6 @@ async def run() -> None:
         raise error
 
     async def shutdown_application() -> None:
-        if heartbeat_task is not None:
-            heartbeat_task.cancel()
-            await asyncio.gather(heartbeat_task, return_exceptions=True)
         if telegram_app is not None and telegram_started:
             await _shutdown_telegram_application(
                 telegram_app,

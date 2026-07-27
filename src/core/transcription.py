@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 from telegram import File
 
 from src.config import OPENAI_TRANSCRIPTION_MODEL
-from src.utils.llm import client
+from src.core.llm import client
 
 logger = logging.getLogger(__name__)
 

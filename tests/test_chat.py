@@ -15,23 +15,23 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from src import config
 from src.handlers import chat
-from src.utils.debounce import DebounceCoordinator, PendingMessage
-from src.utils import llm
-from src.utils.tasks import ScheduledTask
+from src.core.debounce import DebounceCoordinator, PendingMessage
+from src.core import llm
+from src.reminders.repository import ScheduledTask
 
 
 class TranscriptionTests(unittest.IsolatedAsyncioTestCase):
     async def test_transcribe_voice_downloads_file_and_uses_configured_model(self):
-        from src.utils.transcription import transcribe_voice
+        from src.core.transcription import transcribe_voice
 
         telegram_file = MagicMock()
         telegram_file.download_to_drive = AsyncMock()
         response = SimpleNamespace(text="नमस्ते, कल 9 बजे याद दिलाना")
 
-        with patch("src.utils.transcription.client.audio.transcriptions.create", return_value=response) as create, patch(
-            "src.utils.transcription.TemporaryDirectory"
-        ) as temporary_directory, patch("src.utils.transcription.Path.open", create=True) as open_file, patch(
-            "src.utils.transcription.logger"
+        with patch("src.core.transcription.client.audio.transcriptions.create", return_value=response) as create, patch(
+            "src.core.transcription.TemporaryDirectory"
+        ) as temporary_directory, patch("src.core.transcription.Path.open", create=True) as open_file, patch(
+            "src.core.transcription.logger"
         ) as logger:
             temporary_directory.return_value.__enter__.return_value = "/tmp/transcription"
             open_file.return_value.__enter__.return_value = MagicMock()
@@ -154,7 +154,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         model_started = asyncio.Event()
         release_model = asyncio.Event()
 
-        async def run_agent_loop(messages):
+        async def run_agent_loop(messages, *, capture_key=None):
             model_started.set()
             await release_model.wait()
             return "reply"
@@ -187,7 +187,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             "src.handlers.chat.history.add"
         ) as add, patch(
             "src.handlers.chat.run_agent_loop", new=AsyncMock(return_value="One reply")
-        ), patch("src.utils.errors.asyncio.sleep", new=AsyncMock()) as sleep:
+        ), patch("src.core.errors.asyncio.sleep", new=AsyncMock()) as sleep:
             await chat.process_burst(7, [PendingMessage(1, "Hello", send_reply)])
 
         self.assertEqual(send_reply.await_count, 2)
@@ -201,7 +201,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             "src.handlers.chat.history.add"
         ) as add, patch(
             "src.handlers.chat.run_agent_loop", new=AsyncMock(return_value="One reply")
-        ), patch("src.utils.errors.asyncio.sleep", new=AsyncMock()):
+        ), patch("src.core.errors.asyncio.sleep", new=AsyncMock()):
             await chat.process_burst(7, [PendingMessage(1, "Hello", send_reply)])
 
         self.assertEqual(send_reply.await_count, chat.TELEGRAM_SEND_ATTEMPTS)
@@ -215,7 +215,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             time.sleep(0.05)
             return response
 
-        with patch("src.utils.llm.client.chat.completions.create", side_effect=create_response):
+        with patch("src.core.llm.client.chat.completions.create", side_effect=create_response):
             task = asyncio.create_task(chat.run_agent_loop([{"role": "system", "content": "test"}]))
             await asyncio.sleep(0.01)
 
@@ -226,7 +226,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         final_response = SimpleNamespace(content="Done", tool_calls=None)
         response = SimpleNamespace(choices=[SimpleNamespace(message=final_response)])
 
-        with patch("src.utils.llm.client.chat.completions.create", return_value=response) as create:
+        with patch("src.core.llm.client.chat.completions.create", return_value=response) as create:
             await chat.run_agent_loop([{"role": "system", "content": "test"}])
 
         self.assertNotIn("temperature", create.call_args.kwargs)
@@ -242,7 +242,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        with patch("src.utils.llm.client.chat.completions.create", return_value=response) as create:
+        with patch("src.core.llm.client.chat.completions.create", return_value=response) as create:
             decision = await llm.classify_tool_intent(
                 [{"role": "user", "content": "Add 21rs expense as hema aunty"}],
                 {"expenses": "Track personal expenses"},
@@ -278,7 +278,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             choices=[SimpleNamespace(message=SimpleNamespace(content='{"intent":"general","requires_tool":false}'))]
         )
 
-        with patch("src.utils.llm.client.chat.completions.create", return_value=response):
+        with patch("src.core.llm.client.chat.completions.create", return_value=response):
             decision = await llm.classify_tool_intent(
                 [{"role": "user", "content": "How are you?"}],
                 {"expenses": "Track personal expenses"},
@@ -318,6 +318,33 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_choice, "required")
         self.assertEqual(tools, [{"name": "reminder"}])
 
+    async def test_durable_thought_selects_brain_tools(self):
+        messages = [{"role": "user", "content": "Build a freelancer money app"}]
+        with patch(
+            "src.handlers.chat.classify_tool_intent",
+            new=AsyncMock(return_value=("brain", True)),
+        ), patch(
+            "src.handlers.chat.tool_definitions_for_intent",
+            return_value=[
+                {"type": "function", "function": {"name": "save_brain_item"}},
+            ],
+        ):
+            tools, choice = await chat.select_agent_tools(messages)
+
+        self.assertEqual(choice, "required")
+        self.assertEqual(tools, [{"type": "function", "function": {"name": "save_brain_item"}}])
+
+    async def test_brain_management_request_uses_only_lifecycle_tools(self):
+        messages = [{"role": "user", "content": "Search my brain for freelancer ideas"}]
+        lifecycle_tools = [{"type": "function", "function": {"name": "search_brain"}}]
+        with patch(
+            "src.handlers.chat.classify_tool_intent",
+            new=AsyncMock(return_value=("brain_management", True)),
+        ), patch("src.handlers.chat.tool_definitions_for_intent", return_value=lifecycle_tools):
+            tools, choice = await chat.select_agent_tools(messages)
+
+        self.assertEqual((tools, choice), (lifecycle_tools, "required"))
+
     async def test_non_executable_tool_request_does_not_expose_tools(self):
         messages = [{"role": "user", "content": "What expense categories can I use?"}]
 
@@ -354,7 +381,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             datetime(2099, 1, 1, tzinfo=timezone.utc),
             None,
         )
-        with patch("src.tools.schedule_task.tasks.create_task", return_value=task):
+        with patch("src.reminders.create_tool.repository.create_task", return_value=task):
             result = chat.execute_tool_call(
                 "schedule_task",
                 '{"title":"Call Dad","due_at":"2099-01-02T19:00:00+05:30"}',
@@ -373,7 +400,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("title", result["error"])
 
     def test_execute_tool_call_rejects_generic_reminder_title(self):
-        with patch("src.tools.schedule_task.tasks.create_task") as create_task:
+        with patch("src.reminders.create_tool.repository.create_task") as create_task:
             result = chat.execute_tool_call(
                 "schedule_task",
                 '{"title":"Reminder","due_at":"2099-01-02T19:00:00+05:30"}',
@@ -384,13 +411,13 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         create_task.assert_not_called()
 
     def test_execute_tool_call_clears_active_reminders(self):
-        with patch("src.tools.manage_tasks.tasks.clear_active_tasks", return_value=15):
+        with patch("src.reminders.manage_tool.repository.clear_active_tasks", return_value=15):
             result = chat.execute_tool_call("manage_reminders", '{"action":"clear"}')
 
         self.assertEqual(result, {"ok": True, "cleared_count": 15})
 
     def test_execute_tool_call_removes_selected_reminders(self):
-        with patch("src.tools.manage_tasks.tasks.complete_tasks", return_value=2):
+        with patch("src.reminders.manage_tool.repository.complete_tasks", return_value=2):
             result = chat.execute_tool_call(
                 "manage_reminders", '{"action":"remove","task_ids":[3,4]}'
             )
@@ -414,12 +441,51 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(choices=[SimpleNamespace(message=tool_response)]),
             SimpleNamespace(choices=[SimpleNamespace(message=final_response)]),
         ]
-        with patch("src.utils.llm.client.chat.completions.create", side_effect=responses), patch(
+        with patch("src.core.llm.client.chat.completions.create", side_effect=responses), patch(
             "src.handlers.chat.execute_tool_call", return_value={"ok": True}
         ):
             reply = await chat.run_agent_loop([{"role": "system", "content": "test"}])
 
         self.assertEqual(reply, "Done — I'll remind you.")
+
+    async def test_agent_loop_appends_saved_brain_item_notice(self):
+        tool_call = SimpleNamespace(
+            id="call_1",
+            function=SimpleNamespace(name="save_brain_item", arguments="{}"),
+        )
+        responses = [
+            SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[tool_call]))]),
+            SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Nice idea.", tool_calls=None))]),
+        ]
+        with patch("src.handlers.chat.select_agent_tools", new=AsyncMock(return_value=([], None))), patch(
+            "src.handlers.chat.ask_llm", new=AsyncMock(side_effect=responses)
+        ), patch(
+            "src.handlers.chat.execute_tool_call",
+            return_value={"ok": True, "brain_item": {"title": "Freelancer app"}},
+        ):
+            reply = await chat.run_agent_loop([{"role": "user", "content": "Build an app"}], capture_key="telegram:7:1:1")
+
+        self.assertEqual(reply, "Nice idea.\n\nSaved to your brain: Freelancer app.")
+
+    async def test_agent_loop_reports_saved_item_when_round_limit_is_reached(self):
+        tool_call = SimpleNamespace(
+            id="call_1",
+            function=SimpleNamespace(name="save_brain_item", arguments="{}"),
+        )
+        response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[tool_call]))])
+        with patch.object(config, "MAX_TOOL_CALL_ROUNDS", 1), patch(
+            "src.handlers.chat.select_agent_tools", new=AsyncMock(return_value=([], None))
+        ), patch("src.handlers.chat.ask_llm", new=AsyncMock(return_value=response)
+        ), patch(
+            "src.handlers.chat.execute_tool_call",
+            return_value={"ok": True, "brain_item": {"title": "Freelancer app"}},
+        ):
+            reply = await chat.run_agent_loop([{"role": "user", "content": "Build an app"}])
+
+        self.assertEqual(
+            reply,
+            "Saved to your brain: Freelancer app. I couldn't finish the remaining request; please try that part again.",
+        )
 
     async def test_agent_loop_keeps_selected_tools_after_a_tool_result(self):
         reminder_tools = [{"type": "function", "function": {"name": "manage_reminders"}}]
@@ -469,7 +535,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             function=SimpleNamespace(name="schedule_task", arguments="{}"),
         )
         response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[tool_call]))])
-        with patch("src.utils.llm.client.chat.completions.create", return_value=response), patch(
+        with patch("src.core.llm.client.chat.completions.create", return_value=response), patch(
             "src.handlers.chat.execute_tool_call", return_value={"ok": False}
         ):
             reply = await chat.run_agent_loop([{"role": "system", "content": "test"}])
@@ -485,7 +551,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[tool_call]))]
         )
         with patch.object(config, "MAX_TOOL_CALL_ROUNDS", 1), patch(
-            "src.utils.llm.client.chat.completions.create", return_value=response
+            "src.core.llm.client.chat.completions.create", return_value=response
         ), patch("src.handlers.chat.execute_tool_call", return_value={"ok": False}):
             reply = await chat.run_agent_loop([{"role": "system", "content": "test"}])
 

@@ -2,9 +2,9 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from src import config
-from src.utils import heartbeats, memory
-from src.utils.database import read_only_database_connection
-from src.utils.history import format_timestamp
+from src.knowledge import brain
+from src.core.database import read_only_database_connection
+from src.conversations.history import format_timestamp
 
 
 def utc_now() -> datetime:
@@ -24,18 +24,6 @@ def _count_by_value(
     return counts
 
 
-def _service_snapshot(current_time: datetime) -> dict[str, dict[str, str | None]]:
-    recorded = heartbeats.get_heartbeats(current_time)
-    services: dict[str, dict[str, str | None]] = {}
-    for service_name in ("bot", "worker"):
-        heartbeat = recorded.get(service_name)
-        services[service_name] = {
-            "status": heartbeat.status if heartbeat else "unhealthy",
-            "updated_at": format_timestamp(heartbeat.updated_at) if heartbeat else None,
-        }
-    return services
-
-
 def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
     return connection.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table_name,)
@@ -50,9 +38,8 @@ def get_dashboard_snapshot(now: datetime | None = None) -> dict[str, object]:
 
     with read_only_database_connection() as connection:
         message_exists = _table_exists(connection, "messages")
-        memory_exists = _table_exists(connection, "memories")
-        task_exists = _table_exists(connection, "tasks")
-        reminder_exists = _table_exists(connection, "reminders")
+        brain_exists = _table_exists(connection, "brain_items")
+        delivery_exists = _table_exists(connection, "reminder_deliveries")
         message_total = (
             connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
             if message_exists else 0
@@ -69,54 +56,44 @@ def get_dashboard_snapshot(now: datetime | None = None) -> dict[str, object]:
             connection, "SELECT role AS value, COUNT(*) AS count FROM messages GROUP BY role",
             {"assistant": 0, "user": 0},
         ) if message_exists else {"assistant": 0, "user": 0}
-        empty_memory_kinds = {kind: 0 for kind in sorted(memory.MEMORY_KINDS)}
+        empty_memory_kinds = {
+            kind: 0 for kind in sorted(brain.BRAIN_ITEM_TYPES - {"task"})
+        }
         memory_kinds = _count_by_value(
-            connection, "SELECT kind AS value, COUNT(*) AS count FROM memories GROUP BY kind",
+            connection, "SELECT item_type AS value, COUNT(*) AS count FROM brain_items WHERE item_type != 'task' GROUP BY item_type",
             empty_memory_kinds,
-        ) if memory_exists else empty_memory_kinds
+        ) if brain_exists else empty_memory_kinds
         memory_total = sum(memory_kinds.values())
-        expiring_memories = connection.execute(
-            "SELECT COUNT(*) FROM memories WHERE expires_at IS NOT NULL "
-            "AND expires_at > ? AND expires_at <= ?", (current_timestamp, seven_days_from_now)
-        ).fetchone()[0] if memory_exists else 0
+        expiring_memories = 0
         task_statuses = _count_by_value(
-            connection, "SELECT status AS value, COUNT(*) AS count FROM tasks GROUP BY status",
+            connection, "SELECT status AS value, COUNT(*) AS count FROM brain_items WHERE item_type = 'task' GROUP BY status",
             {"active": 0, "completed": 0, "cancelled": 0},
-        ) if task_exists else {"active": 0, "completed": 0, "cancelled": 0}
+        ) if brain_exists else {"active": 0, "completed": 0, "cancelled": 0}
         reminder_statuses = _count_by_value(
-            connection, "SELECT status AS value, COUNT(*) AS count FROM reminders GROUP BY status",
+            connection, "SELECT status AS value, COUNT(*) AS count FROM reminder_deliveries GROUP BY status",
             {"pending": 0, "leased": 0, "delivered": 0, "failed": 0},
-        ) if reminder_exists else {"pending": 0, "leased": 0, "delivered": 0, "failed": 0}
+        ) if delivery_exists else {"pending": 0, "leased": 0, "delivered": 0, "failed": 0}
         overdue_pending = connection.execute(
-            "SELECT COUNT(*) FROM reminders WHERE status = 'pending' AND scheduled_at < ?",
+            "SELECT COUNT(*) FROM reminder_deliveries WHERE status = 'pending' AND scheduled_at < ?",
             (current_timestamp,),
-        ).fetchone()[0] if reminder_exists else 0
+        ).fetchone()[0] if delivery_exists else 0
         upcoming_rows = connection.execute(
-            "SELECT tasks.title, reminders.scheduled_at, tasks.recurrence_rule "
-            "FROM reminders JOIN tasks ON tasks.id = reminders.task_id "
-            "WHERE reminders.status = 'pending' AND reminders.scheduled_at >= ? "
-            "ORDER BY reminders.scheduled_at, reminders.id LIMIT 5",
+            "SELECT brain_items.title, reminder_deliveries.scheduled_at, brain_items.recurrence_rule "
+            "FROM reminder_deliveries JOIN brain_items ON brain_items.id = reminder_deliveries.brain_item_id "
+            "WHERE reminder_deliveries.status = 'pending' AND reminder_deliveries.scheduled_at >= ? "
+            "ORDER BY reminder_deliveries.scheduled_at, reminder_deliveries.id LIMIT 5",
             (current_timestamp,),
-        ).fetchall() if reminder_exists and task_exists else []
+        ).fetchall() if delivery_exists and brain_exists else []
         failure_rows = connection.execute(
-            "SELECT tasks.title, reminders.updated_at, reminders.attempt_count, reminders.last_error "
-            "FROM reminders JOIN tasks ON tasks.id = reminders.task_id "
-            "WHERE reminders.status = 'failed' ORDER BY reminders.updated_at DESC, reminders.id DESC LIMIT 5"
-        ).fetchall() if reminder_exists and task_exists else []
+            "SELECT brain_items.title, reminder_deliveries.updated_at, reminder_deliveries.attempt_count, reminder_deliveries.last_error "
+            "FROM reminder_deliveries JOIN brain_items ON brain_items.id = reminder_deliveries.brain_item_id "
+            "WHERE reminder_deliveries.status = 'failed' ORDER BY reminder_deliveries.updated_at DESC, reminder_deliveries.id DESC LIMIT 5"
+        ).fetchall() if delivery_exists and brain_exists else []
 
-    services = _service_snapshot(current_time)
-    statuses = {service["status"] for service in services.values()}
-    overall_status = (
-        "healthy"
-        if statuses == {"healthy"}
-        else "degraded"
-        if "healthy" in statuses
-        else "unhealthy"
-    )
     return {
         "generated_at": current_timestamp,
-        "status": overall_status,
-        "services": services,
+        "status": "healthy",
+        "services": {},
         "configuration": {
             "openai_model": config.OPENAI_MODEL,
             "transcription_model": config.OPENAI_TRANSCRIPTION_MODEL,

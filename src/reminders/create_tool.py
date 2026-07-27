@@ -4,8 +4,8 @@ import sqlite3
 from zoneinfo import ZoneInfo
 
 from src.config import TASK_TIMEZONE
-from src.utils.errors import try_catch
-from src.utils import tasks
+from src.core.errors import try_catch
+from src.reminders import repository
 
 logger = logging.getLogger(__name__)
 GENERIC_TITLES = {"reminder", "a reminder", "task", "a task"}
@@ -52,7 +52,7 @@ def execute(arguments: str) -> dict[str, object]:
         title = values["title"]
         if isinstance(title, str) and title.strip().casefold() in GENERIC_TITLES:
             raise ValueError("Reminder title must say what to remind the user about.")
-        task = tasks.create_task(
+        task = repository.create_task(
             title=title,
             due_at=values["due_at"],
             recurrence=values.get("recurrence"),

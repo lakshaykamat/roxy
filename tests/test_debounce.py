@@ -2,7 +2,7 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock
 
-from src.utils.debounce import DebounceCoordinator, PendingMessage
+from src.core.debounce import DebounceCoordinator, PendingMessage
 
 
 class DebounceCoordinatorTests(unittest.IsolatedAsyncioTestCase):

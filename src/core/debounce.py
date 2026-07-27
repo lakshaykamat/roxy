@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from src.utils.errors import try_async
+from src.core.errors import try_async
 
 
 @dataclass(frozen=True)

@@ -1,9 +1,9 @@
 """LLM tool definitions and handlers for the expense tracker.
 
-Handlers are intentionally thin: they parse the model's arguments, delegate
-validation to :mod:`src.services.expense_models`, HTTP to the async client, and
-wording to :mod:`src.utils.expense_formatting`. Multi-turn concerns (ambiguous
-matches, delete confirmation) are held in :mod:`src.utils.expense_state`.
+Handlers are intentionally thin: they parse model arguments, delegate
+validation to :mod:`src.expenses.models`, HTTP to the async client, and wording
+to :mod:`src.expenses.formatting`. Multi-turn concerns are held in
+:mod:`src.expenses.state`.
 
 Every handler returns a plain ``dict`` and never raises, converting
 :class:`ExpenseTrackerError` into a short, sanitized ``error`` string.
@@ -15,12 +15,12 @@ import json
 import logging
 
 from src import config
-from src.services import expense_models as models
-from src.services.expense_errors import ExpenseTrackerError, ExpenseValidationError
-from src.services.expense_models import Expense, ExpenseCategory, match_expenses
-from src.services.expense_tracker_client import get_client
-from src.utils import expense_formatting as fmt
-from src.utils import expense_state as state
+from src.expenses import models
+from src.expenses.errors import ExpenseTrackerError, ExpenseValidationError
+from src.expenses.models import Expense, ExpenseCategory, match_expenses
+from src.expenses.client import get_client
+from src.expenses import formatting as fmt
+from src.expenses import state
 
 logger = logging.getLogger(__name__)
 

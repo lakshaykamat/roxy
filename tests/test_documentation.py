@@ -9,3 +9,8 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("DASHBOARD_PASSWORD", readme)
         self.assertIn("DASHBOARD_SESSION_SECRET", readme)
         self.assertIn("DASHBOARD_SECURE_COOKIES=true", readme)
+
+    def test_readme_documents_brain_privacy_controls(self):
+        readme = Path("README.md").read_text()
+        self.assertIn("/brain_pause", readme)
+        self.assertIn("Tasks are brain items", readme)

@@ -6,7 +6,7 @@ from openai import OpenAI
 from openai.types.chat import ChatCompletion
 
 from src.config import INTENT_ROUTER_MODEL, OPENAI_API_KEY, OPENAI_MODEL
-from src.utils.errors import try_async
+from src.core.errors import try_async
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 logger = logging.getLogger(__name__)
@@ -86,6 +86,18 @@ async def classify_tool_intent(
         examples.append(
             '- "Remind me to call Mum tomorrow at 10" -> reminders, requires_tool=true'
         )
+    if "brain" in intents:
+        examples.extend(
+            [
+                '- "Build a freelancer money app" -> brain, requires_tool=true',
+                '- "My sister Anya lives in Pune" -> brain, requires_tool=true',
+                '- "Don\'t save this: my API key is abc" -> general, requires_tool=false',
+            ]
+        )
+    if "brain_management" in intents:
+        examples.append(
+            '- "Search my brain for freelancer ideas" -> brain_management, requires_tool=true'
+        )
     examples.append('- "How are you?" -> general, requires_tool=false')
     routing_examples = "\n".join(examples)
 
@@ -105,6 +117,11 @@ async def classify_tool_intent(
                         "or retrieve facts now. "
                         "A confirmation or answer to a prior expense or reminder clarification can require "
                         "a tool. A user reporting an item and amount is an expense action and requires a tool.\n"
+                        "For brain, use it for durable ideas, facts, preferences, people, projects, goals, "
+                        "decisions, references, and reflections. Use brain_management only to search, archive, "
+                        "or delete an item that has already been saved. Keep greetings, "
+                        "passwords, API keys, account numbers, health details, precise locations, expenses, "
+                        "and content containing 'don\'t save' as general.\n"
                         f"Available intents:\n{intent_options}\n"
                         f"Examples:\n{routing_examples}"
                     ),

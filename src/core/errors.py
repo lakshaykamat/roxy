@@ -55,6 +55,7 @@ async def retry_async(
     logger: logging.Logger,
     error_message: str,
     exception_types: ExceptionTypes = Exception,
+    should_retry: Callable[[BaseException], bool] | None = None,
 ) -> T:
     if attempts < 1:
         raise ValueError("attempts must be at least 1")
@@ -63,7 +64,7 @@ async def retry_async(
         try:
             return await operation()
         except exception_types as error:
-            if attempt == attempts:
+            if attempt == attempts or (should_retry is not None and not should_retry(error)):
                 raise
             delay_seconds = retry_delay_seconds * (2 ** (attempt - 1))
             logger.warning(

@@ -3,8 +3,8 @@ import logging
 import sqlite3
 from zoneinfo import ZoneInfo
 
-from src.utils import tasks
-from src.utils.errors import try_catch
+from src.reminders import repository
+from src.core.errors import try_catch
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ def list_tasks(values: dict[str, object]) -> dict[str, object]:
                 "timezone": task.timezone,
                 "recurrence": task.recurrence_rule or "one-time",
             }
-            for task in tasks.list_active_tasks()
+            for task in repository.list_active_tasks()
         ],
     }
 
@@ -83,7 +83,7 @@ def list_tasks(values: dict[str, object]) -> dict[str, object]:
 def remove_requested_tasks(values: dict[str, object]) -> dict[str, object]:
     if set(values) != {"action", "task_ids"}:
         raise ValueError("Task IDs are required to remove reminders.")
-    return {"ok": True, "removed_count": tasks.complete_tasks(values["task_ids"])}
+    return {"ok": True, "removed_count": repository.complete_tasks(values["task_ids"])}
 
 
 def update_requested_task(values: dict[str, object]) -> dict[str, object]:
@@ -95,12 +95,12 @@ def update_requested_task(values: dict[str, object]) -> dict[str, object]:
     }
     if not update_values:
         raise ValueError("Specify at least one reminder change.")
-    task = tasks.update_task(
+    task = repository.update_task(
         values["task_id"],
         title=update_values.get("title"),
         due_at=update_values.get("due_at"),
-        recurrence=update_values.get("recurrence", tasks.UNSET),
-        task_timezone=update_values.get("timezone", tasks.UNSET),
+        recurrence=update_values.get("recurrence", repository.UNSET),
+        task_timezone=update_values.get("timezone", repository.UNSET),
     )
     if task is None:
         return {"ok": False, "error": "I couldn't find that active reminder."}
@@ -118,7 +118,7 @@ def update_requested_task(values: dict[str, object]) -> dict[str, object]:
 def clear_all_tasks(values: dict[str, object]) -> dict[str, object]:
     if set(values) != {"action"}:
         raise ValueError("Clearing reminders does not accept other fields.")
-    return {"ok": True, "cleared_count": tasks.clear_active_tasks()}
+    return {"ok": True, "cleared_count": repository.clear_active_tasks()}
 
 
 def run_operation(operation):

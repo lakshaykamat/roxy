@@ -10,17 +10,17 @@ from telegram.error import NetworkError
 from telegram.ext import ContextTypes
 from src import config
 from src.prompts.system import SYSTEM_PROMPT
-from src.tools.registry import (
+from src.agent.tool_registry import (
     available_tool_intents,
     execute_tool_call,
     tool_definitions_for_intent,
 )
-from src.utils.debounce import DebounceCoordinator, PendingMessage
-from src.utils.errors import log_async_error, retry_async, try_async
-from src.utils import history
-from src.utils.memory import find_relevant_memories
-from src.utils.llm import ask_llm, classify_tool_intent
-from src.utils.transcription import transcribe_voice
+from src.core.debounce import DebounceCoordinator, PendingMessage
+from src.core.errors import log_async_error, retry_async, try_async
+from src.conversations import history
+from src.knowledge import brain
+from src.core.llm import ask_llm, classify_tool_intent
+from src.core.transcription import transcribe_voice
 
 logger = logging.getLogger(__name__)
 FALLBACK_REPLY = "Sorry, I hit a snag. Please send that again in a moment."
@@ -37,7 +37,7 @@ def build_photo_message(
     if caption:
         content.append({"type": "text", "text": caption})
     content.append(image_part)
-    context = memory_context(caption)
+    context = brain_context(caption)
     messages: list[object] = [
         {"role": "system", "content": SYSTEM_PROMPT},
     ]
@@ -67,7 +67,9 @@ async def photo_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         image_url = file.file_path
         history_before = history.get_before(message_id)
         messages = build_photo_message(history_before, image_url, caption)
-        reply = await run_agent_loop(messages)
+        reply = await run_agent_loop(
+            messages, capture_key=f"telegram:{chat_id}:{message_id}:{message_id}"
+        )
         history.add("assistant", reply)
         await context.bot.send_message(chat_id, reply)
         logger.info("Photo response sent for chat %s", chat_id)
@@ -142,7 +144,10 @@ async def process_burst(chat_id: int, pending_messages: list[PendingMessage]) ->
     send_reply = pending_messages[-1].send_reply
 
     async def create_reply() -> str:
-        return await run_agent_loop(build_burst_messages(pending_messages))
+        return await run_agent_loop(
+            build_burst_messages(pending_messages),
+            capture_key=f"telegram:{chat_id}:{pending_messages[0].id}:{pending_messages[-1].id}",
+        )
 
     async def send_with_retry(text: str) -> object:
         return await retry_async(
@@ -185,7 +190,7 @@ def build_burst_messages(pending_messages: list[PendingMessage]) -> list[object]
     user_message = "\n".join(message.text for message in pending_messages)
     user_message += f"\n\nCurrent time in {config.TASK_TIMEZONE}: {current_time}"
 
-    context = memory_context(user_message)
+    context = brain_context(user_message)
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         *([{"role": "system", "content": context}] if context else []),
@@ -216,22 +221,34 @@ async def select_agent_tools(messages: list[object]) -> tuple[list[object] | Non
 debounce_coordinator = DebounceCoordinator(config.CHAT_DEBOUNCE_SECONDS, process_burst)
 
 
-async def run_agent_loop(messages: list[object]) -> str:
+async def run_agent_loop(messages: list[object], *, capture_key: str | None = None) -> str:
     tools, tool_choice = await select_agent_tools(messages)
+    source_content = latest_user_text(messages)
+    saved_titles: list[str] = []
     for _ in range(config.MAX_TOOL_CALL_ROUNDS):
         response = await ask_llm(messages, tools=tools, tool_choice=tool_choice)
         tool_choice = None
         message = response.choices[0].message
         if not message.tool_calls:
-            return message.content or "Sorry, I couldn't prepare a response."
+            reply = message.content or "Sorry, I couldn't prepare a response."
+            return append_saved_item_notice(reply, saved_titles)
 
         messages.append(message)
         for tool_call in message.tool_calls:
             logger.info("Tool call started: %s", tool_call.function.name)
-            result = execute_tool_call(tool_call.function.name, tool_call.function.arguments)
+            result = execute_tool_call(
+                tool_call.function.name,
+                tool_call.function.arguments,
+                capture_key=capture_key,
+                source_content=source_content,
+            )
             if inspect.isawaitable(result):
                 result = await result
             succeeded = result.get("ok") if isinstance(result, dict) else False
+            if succeeded and tool_call.function.name == "save_brain_item":
+                item = result.get("brain_item")
+                if isinstance(item, dict) and isinstance(item.get("title"), str):
+                    saved_titles.append(item["title"])
             logger.info("Tool call completed: %s ok=%s", tool_call.function.name, succeeded)
             messages.append(
                 {
@@ -241,12 +258,39 @@ async def run_agent_loop(messages: list[object]) -> str:
                 }
             )
 
+    if saved_titles:
+        return (
+            f"Saved to your brain: {saved_titles[-1]}. "
+            "I couldn't finish the remaining request; please try that part again."
+        )
     return "I couldn't finish that just now. Please try again in a moment."
 
 
-def memory_context(text: str) -> str:
-    memories = find_relevant_memories(text)
-    if not memories:
+def append_saved_item_notice(reply: str, saved_titles: list[str]) -> str:
+    if not saved_titles:
+        return reply
+    return f"{reply}\n\nSaved to your brain: {saved_titles[-1]}."
+
+
+def latest_user_text(messages: list[object]) -> str:
+    for message in reversed(messages):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return " ".join(
+                part["text"]
+                for part in content
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+            )
+    return ""
+
+
+def brain_context(text: str) -> str:
+    items = brain.search_items(text, 8)
+    if not items:
         return ""
-    lines = (f"- [{item.id}] {item.content}" for item in memories)
-    return "Relevant user-approved memories:\n" + "\n".join(lines)
+    lines = (f"- [{item.id}] {item.content}" for item in items)
+    return "Relevant brain items:\n" + "\n".join(lines)

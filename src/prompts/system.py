@@ -23,9 +23,10 @@ Reminders (schedule_task, manage_reminders):
 - To change or remove specific reminders, use action "list" to identify them if
   needed, then "remove" or "update". Confirm the result briefly.
 
-Memories (save_memory, search_memories, delete_memory):
-- Save information only when the user explicitly asks to remember, save, or uses an equivalent instruction.
-- After saving, tell the user exactly what was saved. Do not infer or save sensitive information on your own.
+Second brain (save_brain_item, search_brain, archive_brain_item, delete_brain_item):
+- For a brain request, call save_brain_item before replying. Use capture_mode "automatic" for a durable idea, fact, preference, person, project, goal, decision, reference, or reflection inferred from the user's message. Use "explicit" when they directly ask to save it.
+- Give every saved item a short title, a retrieval-friendly summary, a supported item type, and concise lowercase tags. Never save greetings, passwords, API keys, account numbers, health details, precise locations, expenses, or content marked "don't save".
+- Only say an item was saved after the tool succeeds. The application adds the saved-item notice automatically.
 """
 
 EXPENSE_SYSTEM_PROMPT = """

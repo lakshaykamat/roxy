@@ -1,8 +1,8 @@
 import logging
 import unittest
 
-from src.utils.logging import configure_logging
-from src.utils.errors import try_catch
+from src.core.logging import configure_logging
+from src.core.errors import try_catch
 
 
 class LoggingTests(unittest.TestCase):

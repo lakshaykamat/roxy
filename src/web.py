@@ -10,9 +10,9 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
 from src import config
-from src.services import dashboard
-from src.utils.errors import try_catch
-from src.utils.history import database_connection
+from src.dashboard import service as dashboard
+from src.core.errors import try_catch
+from src.conversations.history import database_connection
 
 logger = logging.getLogger(__name__)
 TEMPLATE_DIRECTORY = Path(__file__).with_name("templates")

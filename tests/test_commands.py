@@ -1,4 +1,5 @@
 import os
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -10,13 +11,28 @@ os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from src.handlers import commands
+from src import config
+from src.knowledge import brain
 
 
 class CommandTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.original_path = config.DATABASE_PATH
+        config.DATABASE_PATH = Path(self.directory.name) / "roxy.db"
+
+    def tearDown(self):
+        config.DATABASE_PATH = self.original_path
+        self.directory.cleanup()
+
     def test_reset_command_is_not_registered_or_documented(self):
         self.assertNotIn('CommandHandler("reset"', Path("src/app.py").read_text())
         self.assertNotIn("def reset", Path("src/handlers/commands.py").read_text())
         self.assertNotIn("/reset", Path("README.md").read_text())
+
+    def test_legacy_memory_commands_are_not_registered(self):
+        self.assertNotIn('CommandHandler("memory"', Path("src/app.py").read_text())
+        self.assertNotIn('CommandHandler("forget"', Path("src/app.py").read_text())
 
     def test_tasks_command_shows_empty_state(self):
         update = MagicMock()
@@ -144,4 +160,23 @@ class CommandTests(unittest.TestCase):
 
         update.message.reply_text.assert_awaited_once_with(
             "Use /done <task id>, for example /done 3."
+        )
+
+    def test_brain_pause_disables_capture(self):
+        self.assertEqual(commands.brain_pause_response(), "Automatic brain capture is paused.")
+        self.assertFalse(brain.auto_capture_enabled())
+        self.assertEqual(commands.brain_resume_response(), "Automatic brain capture is on.")
+        self.assertTrue(brain.auto_capture_enabled())
+
+    def test_brain_commands_list_archive_and_delete_items(self):
+        item = brain.create_item("Focus afternoons", "Focus block", "Keep afternoons clear", "goal", ["focus"], "text", "explicit")
+
+        self.assertIn("Focus block [goal]", commands.brain_list_response())
+        self.assertEqual(commands.brain_item_response([str(item.id)]), "Brain item archived.")
+        self.assertEqual(commands.brain_item_response([str(item.id)], delete=True), "Brain item deleted.")
+
+    def test_brain_item_command_rejects_invalid_id(self):
+        self.assertEqual(
+            commands.brain_item_response(["zero"]),
+            "Use /brain_archive <brain item id>, for example /brain_archive 3.",
         )
