@@ -5,14 +5,25 @@ from datetime import timedelta
 
 from telegram import Bot
 from telegram.error import NetworkError, RetryAfter, TelegramError, TimedOut
+from telegram.request import HTTPXRequest
 
-from src.config import ALLOWED_USER_ID, BOT_TOKEN
+from src.config import (
+    ALLOWED_USER_ID,
+    BOT_TOKEN,
+    TELEGRAM_CONNECT_TIMEOUT_SECONDS,
+    TELEGRAM_POOL_TIMEOUT_SECONDS,
+    TELEGRAM_READ_TIMEOUT_SECONDS,
+    TELEGRAM_WRITE_TIMEOUT_SECONDS,
+)
 from src.prompts.system import SYSTEM_PROMPT
 from src.core.errors import try_async
 from src.reminders import repository
 from src.core.llm import ask_llm
 
 logger = logging.getLogger(__name__)
+
+WORKER_STARTUP_RETRY_DELAY_SECONDS = 5
+MAX_WORKER_STARTUP_RETRY_DELAY_SECONDS = 60
 
 
 class ReminderWorker:
@@ -114,6 +125,40 @@ def retry_delay(attempt_count: int) -> timedelta:
     return timedelta(seconds=min(60 * (2 ** (attempt_count - 1)), 3600))
 
 
+def startup_retry_delay(attempt_count: int) -> int:
+    return min(
+        WORKER_STARTUP_RETRY_DELAY_SECONDS * (2 ** (attempt_count - 1)),
+        MAX_WORKER_STARTUP_RETRY_DELAY_SECONDS,
+    )
+
+
 async def run_worker() -> None:
-    async with Bot(BOT_TOKEN) as bot:
-        await ReminderWorker(bot).run()
+    attempt_count = 0
+
+    async def run_with_bot() -> None:
+        request = HTTPXRequest(
+            connect_timeout=TELEGRAM_CONNECT_TIMEOUT_SECONDS,
+            read_timeout=TELEGRAM_READ_TIMEOUT_SECONDS,
+            write_timeout=TELEGRAM_WRITE_TIMEOUT_SECONDS,
+            pool_timeout=TELEGRAM_POOL_TIMEOUT_SECONDS,
+        )
+        async with Bot(BOT_TOKEN, request=request) as bot:
+            await ReminderWorker(bot).run()
+
+    async def retry_after_network_error(error: BaseException) -> None:
+        nonlocal attempt_count
+        attempt_count += 1
+        delay_seconds = startup_retry_delay(attempt_count)
+        logger.warning(
+            "Reminder worker could not connect to Telegram; retrying in %s seconds: %s",
+            delay_seconds,
+            error,
+        )
+        await asyncio.sleep(delay_seconds)
+
+    while True:
+        await try_async(
+            run_with_bot,
+            handle_error=retry_after_network_error,
+            exception_types=(NetworkError, TimedOut, OSError),
+        )

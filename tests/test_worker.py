@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sqlite3
 import unittest
@@ -5,13 +6,15 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from telegram.error import TimedOut
+
 os.environ.setdefault("ALLOWED_USER_ID", "1")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from src.reminders.repository import Reminder
 from src.reminders import worker
-from src.reminders.worker import ReminderWorker, retry_delay
+from src.reminders.worker import ReminderWorker, retry_delay, startup_retry_delay
 from src.prompts.system import SYSTEM_PROMPT
 
 
@@ -95,3 +98,31 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(retry_delay(1).total_seconds(), 60)
         self.assertEqual(retry_delay(2).total_seconds(), 120)
         self.assertEqual(retry_delay(10).total_seconds(), 3600)
+
+    def test_startup_retry_delay_is_bounded_exponential_backoff(self):
+        self.assertEqual(startup_retry_delay(1), 5)
+        self.assertEqual(startup_retry_delay(2), 10)
+        self.assertEqual(startup_retry_delay(10), 60)
+
+    async def test_run_worker_retries_telegram_startup_timeout(self):
+        failed_bot = MagicMock()
+        failed_bot.__aenter__ = AsyncMock(side_effect=TimedOut())
+        recovered_bot = MagicMock()
+        recovered_bot.__aenter__ = AsyncMock(return_value=recovered_bot)
+        recovered_bot.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "src.reminders.worker.Bot", side_effect=[failed_bot, recovered_bot]
+        ) as bot_class, patch(
+            "src.reminders.worker.ReminderWorker.run",
+            new=AsyncMock(side_effect=asyncio.CancelledError),
+        ), patch("src.reminders.worker.asyncio.sleep", new=AsyncMock()) as sleep:
+            with self.assertRaises(asyncio.CancelledError):
+                await worker.run_worker()
+
+        request = bot_class.call_args.kwargs["request"]
+        self.assertEqual(request._client_kwargs["timeout"].connect, 20)
+        self.assertEqual(request._client_kwargs["timeout"].read, 20)
+        self.assertEqual(request._client_kwargs["timeout"].write, 20)
+        self.assertEqual(request._client_kwargs["timeout"].pool, 5)
+        sleep.assert_awaited_once_with(5)

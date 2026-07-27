@@ -34,6 +34,12 @@ class ConfigTests(unittest.TestCase):
     def test_chat_debounce_uses_two_second_default(self):
         self.assertEqual(config.CHAT_DEBOUNCE_SECONDS, 2)
 
+    def test_telegram_request_timeouts_are_shared_defaults(self):
+        self.assertEqual(config.TELEGRAM_CONNECT_TIMEOUT_SECONDS, 20)
+        self.assertEqual(config.TELEGRAM_READ_TIMEOUT_SECONDS, 20)
+        self.assertEqual(config.TELEGRAM_WRITE_TIMEOUT_SECONDS, 20)
+        self.assertEqual(config.TELEGRAM_POOL_TIMEOUT_SECONDS, 5)
+
     def test_validate_configuration_requires_dashboard_credentials(self):
         values = {"TELEGRAM_BOT_TOKEN": "token", "OPENAI_API_KEY": "key", "ALLOWED_USER_ID": "1", "DASHBOARD_PASSWORD": "", "DASHBOARD_SESSION_SECRET": ""}
         with patch.dict(os.environ, values, clear=True):
