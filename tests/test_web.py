@@ -77,7 +77,7 @@ class WebTests(unittest.TestCase):
         with patch("src.web.dashboard.get_dashboard_snapshot", return_value=SAFE_SNAPSHOT):
             self.assertEqual(client.get("/dashboard-data").json(), SAFE_SNAPSHOT)
 
-    def test_dashboard_renders_readable_cards_instead_of_raw_data_dictionaries(self):
+    def test_dashboard_renders_readable_database_fields_instead_of_raw_data_dictionaries(self):
         snapshot = {
             **SAFE_SNAPSHOT,
             "configuration": {
@@ -96,7 +96,10 @@ class WebTests(unittest.TestCase):
 
         rendered = render_dashboard(snapshot)
 
-        self.assertIn("<dt class=\"text-xs font-medium capitalize text-slate-500\">active</dt>", rendered)
+        self.assertIn("<dt>tasks_active</dt>", rendered)
+        self.assertIn("<dt>MESSAGE_TOTAL</dt>", rendered)
+        self.assertIn('<dt>tasks_active</dt><dd class="font-bold tabular-nums">2</dd>', rendered)
+        self.assertIn('<dt>messages_user</dt><dd class="font-bold tabular-nums">3</dd>', rendered)
         self.assertIn("OpenAI model", rendered)
         self.assertIn("Expense tracking", rendered)
         self.assertNotIn("{'active': 2", rendered)

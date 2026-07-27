@@ -3,81 +3,76 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f7f8fc">
-  <title>Dashboard · Roxy</title>
+  <meta name="theme-color" content="#d9dfd4">
+  <title>Roxy / System record</title>
   <link rel="preconnect" href="https://cdn.tailwindcss.com">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
       theme: {
         extend: {
-          colors: { ink: '#172033', cloud: '#f7f8fc', line: '#e7eaf1', violet: '#6750a4' },
-          boxShadow: { card: '0 4px 18px rgba(23, 32, 51, 0.04)' }
+          colors: { paper: '#eef0e9', panel: '#f9faf6', ink: '#18231b', line: '#8b9588', accent: '#315b3b', alert: '#823a2e' },
+          fontFamily: { mono: ['"Courier New"', 'Courier', 'monospace'] }
         }
       }
     };
   </script>
 </head>
-<body class="min-h-screen overflow-x-hidden bg-cloud font-sans text-ink antialiased">
-  <a class="sr-only left-5 top-4 z-50 rounded-lg bg-violet px-3 py-2 text-sm font-semibold text-white focus:not-sr-only focus:fixed focus:outline-none focus:ring-4 focus:ring-violet/20" href="#main-content">Skip to dashboard content</a>
-  <header class="border-b border-line bg-white/90 backdrop-blur">
-    <div class="mx-auto flex max-w-6xl items-center justify-between px-5 py-4 sm:px-8">
+<body class="min-h-screen bg-paper font-mono text-sm text-ink antialiased">
+  <a class="sr-only left-4 top-4 z-50 border-2 border-ink bg-panel px-3 py-2 focus:not-sr-only focus:fixed focus:outline-none" href="#main-content">Skip to dashboard content</a>
+  <header class="border-b-2 border-ink bg-panel">
+    <div class="mx-auto flex max-w-5xl items-center justify-between px-4 py-3 sm:px-6">
       <a class="flex items-center gap-3" href="/" aria-label="Roxy dashboard">
-        <span class="grid h-9 w-9 place-items-center rounded-xl bg-violet text-sm font-semibold text-white">R</span>
-        <span>
-          <span class="block text-sm font-semibold tracking-wide text-violet">ROXY</span>
-          <span class="block text-xs text-slate-500">Private assistant dashboard</span>
-        </span>
+        <span class="grid h-8 w-8 place-items-center border-2 border-ink bg-accent font-bold text-panel">R</span>
+        <span><span class="block font-bold tracking-[0.18em]">ROXY</span><span class="block text-xs">PRIVATE ASSISTANT / SYSTEM RECORD</span></span>
       </a>
-      <form method="post" action="/logout">
-        <button class="rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-ink focus:outline-none focus:ring-4 focus:ring-violet/10" type="submit">Sign out</button>
-      </form>
+      <form method="post" action="/logout"><button class="border-2 border-ink bg-panel px-3 py-1.5 text-xs font-bold hover:bg-ink hover:text-panel focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2" type="submit">SIGN OUT</button></form>
     </div>
   </header>
-  <main id="main-content" class="mx-auto max-w-6xl px-5 py-8 sm:px-8 sm:py-10">
-    <div class="flex flex-col justify-between gap-5 border-b border-line pb-7 sm:flex-row sm:items-end">
-      <div>
-        <p class="text-sm font-medium text-violet">OVERVIEW</p>
-        <h1 class="mt-1 text-3xl font-semibold tracking-tight text-ink">Good to see you.</h1>
-        <p class="mt-2 text-sm text-slate-600">A private view of Roxy’s activity and health.</p>
-      </div>
-      <div class="flex w-fit items-center gap-2.5" aria-live="polite"><span class="text-xs font-medium text-slate-500">System status</span>{{status_badge}}</div>
+  <main id="main-content" class="mx-auto max-w-5xl px-4 py-7 sm:px-6">
+    <div class="border-b-2 border-ink pb-5 sm:flex sm:items-end sm:justify-between">
+      <div><p class="text-xs font-bold tracking-[0.16em] text-accent">DASHBOARD / 01</p><h1 class="mt-2 text-2xl font-bold tracking-tight">System record</h1><p class="mt-2 max-w-xl text-xs leading-5">Database values and current service state. Refreshes every 30 seconds.</p></div>
+      <div class="mt-4 text-xs sm:mt-0" aria-live="polite"><span class="mr-2">SYSTEM_STATUS:</span>{{status_badge}}</div>
     </div>
 
-    <section class="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="At a glance">
-      <article class="rounded-xl border border-line bg-white p-5 shadow-card"><p class="text-sm font-medium text-slate-500">Messages</p><p class="mt-3 text-3xl font-semibold tracking-tight tabular-nums">{{message_total}}</p><p class="mt-2 text-xs text-slate-500">{{message_last_24_hours}} in the last 24 hours</p></article>
-      <article class="rounded-xl border border-line bg-white p-5 shadow-card"><p class="text-sm font-medium text-slate-500">Saved memories</p><p class="mt-3 text-3xl font-semibold tracking-tight tabular-nums">{{memory_total}}</p><p class="mt-2 text-xs text-slate-500">{{expiring_memories}} expire within 7 days</p></article>
-      <article class="rounded-xl border border-line bg-white p-5 shadow-card"><p class="text-sm font-medium text-slate-500">Overdue reminders</p><p class="mt-3 text-3xl font-semibold tracking-tight tabular-nums">{{overdue_pending}}</p><p class="mt-2 text-xs text-slate-500">Pending reminders past their scheduled time</p></article>
-      <article class="rounded-xl border border-line bg-white p-5 shadow-card"><p class="text-sm font-medium text-slate-500">Latest activity</p><p class="mt-3 break-words text-sm font-semibold leading-6">{{message_latest_at}}</p><p class="mt-2 text-xs text-slate-500">Most recently recorded message</p></article>
+    <section class="mt-6 grid gap-6 lg:grid-cols-2" aria-label="Dashboard records">
+      <article class="border-2 border-ink bg-panel">
+        <div class="border-b-2 border-ink bg-ink px-3 py-2 text-xs font-bold tracking-wider text-panel">ACTIVITY_RECORD</div>
+        <dl class="record-table">{{activity_rows}}</dl>
+      </article>
+      <article class="border-2 border-ink bg-panel">
+        <div class="border-b-2 border-ink bg-ink px-3 py-2 text-xs font-bold tracking-wider text-panel">SYSTEM_CONFIGURATION</div>
+        <dl class="record-table">{{configuration}}</dl>
+      </article>
+      <article class="border-2 border-ink bg-panel">
+        <div class="border-b-2 border-ink bg-ink px-3 py-2 text-xs font-bold tracking-wider text-panel">SERVICE_HEARTBEATS</div>
+        <ul class="divide-y-2 divide-line">{{service_rows}}</ul>
+      </article>
+      <article class="border-2 border-ink bg-panel">
+        <div class="border-b-2 border-ink bg-ink px-3 py-2 text-xs font-bold tracking-wider text-panel">TASK_AND_REMINDER_QUEUE</div>
+        <dl class="record-table">{{queue_rows}}</dl>
+      </article>
     </section>
 
-    <section class="mt-8 grid gap-5 lg:grid-cols-2">
-      <article class="rounded-xl border border-line bg-white p-5 shadow-card"><h2 class="text-base font-semibold">Services</h2><p class="mt-1 text-sm text-slate-500">Live heartbeat status for background processes.</p><ul class="mt-5 divide-y divide-line text-sm text-slate-700 [&_li]:flex [&_li]:items-center [&_li]:justify-between [&_li]:gap-4 [&_li]:py-3 [&_li]:first:pt-0 [&_li]:last:pb-0">{{service_cards}}</ul></article>
-      <article class="rounded-xl border border-line bg-white p-5 shadow-card"><h2 class="text-base font-semibold">Tasks &amp; reminders</h2><p class="mt-1 text-sm text-slate-500">Current scheduling activity.</p><dl class="mt-5 space-y-5"><div><dt class="mb-2 text-sm font-medium text-slate-700">Tasks</dt><dd class="grid grid-cols-3 gap-2">{{task_statuses}}</dd></div><div><dt class="mb-2 text-sm font-medium text-slate-700">Reminders</dt><dd class="grid grid-cols-2 gap-2">{{reminder_statuses}}</dd></div></dl></article>
-      <article class="rounded-xl border border-line bg-white p-5 shadow-card"><h2 class="text-base font-semibold">Upcoming reminders</h2><ul class="mt-4 space-y-3 text-sm text-slate-700 [&_li]:rounded-lg [&_li]:bg-slate-50 [&_li]:px-3 [&_li]:py-2.5">{{upcoming}}</ul></article>
-      <article class="rounded-xl border border-line bg-white p-5 shadow-card"><h2 class="text-base font-semibold">Failed deliveries</h2><ul class="mt-4 space-y-3 text-sm text-slate-700 [&_li]:rounded-lg [&_li]:bg-slate-50 [&_li]:px-3 [&_li]:py-2.5">{{failures}}</ul></article>
+    <section class="mt-6 grid gap-6 lg:grid-cols-2">
+      <article class="border-2 border-ink bg-panel"><div class="border-b-2 border-ink px-3 py-2 text-xs font-bold">UPCOMING_REMINDERS</div><ul class="divide-y divide-line">{{upcoming}}</ul></article>
+      <article class="border-2 border-ink bg-panel"><div class="border-b-2 border-ink px-3 py-2 text-xs font-bold">FAILED_DELIVERIES</div><ul class="divide-y divide-line">{{failures}}</ul></article>
     </section>
-
-    <section class="mt-8 grid gap-5 lg:grid-cols-2">
-      <article class="rounded-xl border border-line bg-white p-5 shadow-card"><h2 class="text-base font-semibold">Activity details</h2><p class="mt-1 text-sm text-slate-500">A privacy-safe breakdown of retained data.</p><dl class="mt-5 space-y-5"><div><dt class="mb-2 text-sm font-medium text-slate-700">Messages by role</dt><dd class="grid grid-cols-2 gap-2">{{message_roles}}</dd></div><div><dt class="mb-2 text-sm font-medium text-slate-700">Memories by kind</dt><dd class="grid grid-cols-2 gap-2 sm:grid-cols-3">{{memory_kinds}}</dd></div></dl></article>
-      <article class="rounded-xl border border-line bg-white p-5 shadow-card"><h2 class="text-base font-semibold">Configuration</h2><p class="mt-1 text-sm text-slate-500">Current runtime settings. Sensitive values stay hidden.</p><dl class="mt-5">{{configuration}}</dl></article>
-    </section>
-    <section class="mt-5 rounded-xl border border-line bg-white p-5 shadow-card"><div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="text-base font-semibold">Notices</h2><p class="text-xs text-slate-500" aria-live="polite">Updated {{generated_at}}</p></div><ul class="mt-4 space-y-2 text-sm text-slate-600 [&_li]:rounded-lg [&_li]:bg-slate-50 [&_li]:px-3 [&_li]:py-2.5">{{notices}}</ul></section>
+    <section class="mt-6 border-2 border-ink bg-panel"><div class="flex flex-wrap items-baseline justify-between gap-2 border-b-2 border-ink px-3 py-2"><h2 class="text-xs font-bold">SYSTEM_NOTICES</h2><p class="text-xs">LAST_UPDATED: {{generated_at}}</p></div><ul class="divide-y divide-line">{{notices}}</ul></section>
   </main>
+  <style>
+    .record-table > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; border-bottom: 1px solid #8b9588; padding: .7rem .75rem; }
+    .record-table > div:last-child { border-bottom: 0; }
+    .record-table dt { font-size: .75rem; font-weight: 700; letter-spacing: .04em; overflow-wrap: anywhere; }
+    .record-table dd { min-width: 0; text-align: right; overflow-wrap: anywhere; }
+    @media (max-width: 420px) { .record-table > div { grid-template-columns: 1fr; gap: .25rem; } .record-table dd { text-align: left; } }
+  </style>
   <script>
     document.querySelectorAll('.js-local-time').forEach((element) => {
       const date = new Date(element.dateTime);
-      if (!Number.isNaN(date.valueOf())) {
-        element.textContent = new Intl.DateTimeFormat(navigator.language, {
-          dateStyle: 'medium', timeStyle: 'short'
-        }).format(date);
-      }
+      if (!Number.isNaN(date.valueOf())) { element.textContent = new Intl.DateTimeFormat(navigator.language, { dateStyle: 'medium', timeStyle: 'short' }).format(date); }
     });
-    window.setInterval(async () => {
-      const response = await fetch('/dashboard-data', {credentials: 'same-origin'});
-      if (response.redirected) { window.location.assign(response.url); return; }
-      if (response.ok) { window.location.reload(); }
-    }, 30000);
+    window.setInterval(async () => { const response = await fetch('/dashboard-data', {credentials: 'same-origin'}); if (response.redirected) { window.location.assign(response.url); return; } if (response.ok) { window.location.reload(); } }, 30000);
   </script>
 </body>
 </html>

@@ -106,31 +106,29 @@ def render_dashboard(snapshot: dict[str, object]) -> str:
     def status_badge(status: object) -> str:
         value = str(status).lower()
         classes = {
-            "healthy": "border-emerald-200 bg-emerald-50 text-emerald-800",
-            "active": "border-emerald-200 bg-emerald-50 text-emerald-800",
-            "delivered": "border-emerald-200 bg-emerald-50 text-emerald-800",
-            "completed": "border-emerald-200 bg-emerald-50 text-emerald-800",
-            "degraded": "border-amber-200 bg-amber-50 text-amber-800",
-            "pending": "border-amber-200 bg-amber-50 text-amber-800",
-            "leased": "border-sky-200 bg-sky-50 text-sky-800",
-            "unhealthy": "border-red-200 bg-red-50 text-red-800",
-            "failed": "border-red-200 bg-red-50 text-red-800",
-            "cancelled": "border-slate-200 bg-slate-100 text-slate-700",
-        }.get(value, "border-slate-200 bg-slate-100 text-slate-700")
+            "healthy": "text-accent",
+            "active": "text-accent",
+            "delivered": "text-accent",
+            "completed": "text-accent",
+            "degraded": "text-amber-800",
+            "pending": "text-amber-800",
+            "leased": "text-sky-800",
+            "unhealthy": "text-alert",
+            "failed": "text-alert",
+            "cancelled": "text-slate-600",
+        }.get(value, "text-slate-600")
         return (
-            f'<span class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 '
-            f'text-xs font-semibold capitalize {classes}"><span class="h-1.5 w-1.5 rounded-full '
-            f'bg-current"></span>{text(value)}</span>'
+            f'<span class="font-bold uppercase {classes}">[{text(value)}]</span>'
         )
 
-    def count_tiles(counts: object, labels: tuple[str, ...]) -> str:
+    def count_rows(counts: object, fields: tuple[tuple[str, str], ...]) -> str:
         values = counts if isinstance(counts, dict) else {}
         return "".join(
-            '<div class="rounded-lg border border-line bg-slate-50 px-3 py-2.5">'
-            f'<dt class="text-xs font-medium capitalize text-slate-500">{text(label)}</dt>'
-            f'<dd class="mt-1 text-lg font-semibold tabular-nums text-ink">{text(values.get(label, 0))}</dd>'
+            '<div>'
+            f'<dt>{text(label)}</dt>'
+            f'<dd class="font-bold tabular-nums">{text(values.get(key, 0))}</dd>'
             "</div>"
-            for label in labels
+            for label, key in fields
         )
 
     def configuration_rows(values: object) -> str:
@@ -144,10 +142,9 @@ def render_dashboard(snapshot: dict[str, object]) -> str:
             ("Expense tracking", "expense_tracker_enabled"),
         )
         return "".join(
-            '<div class="flex items-start justify-between gap-5 border-b border-line py-3 '
-            'first:pt-0 last:border-0 last:pb-0">'
-            f'<dt class="text-sm text-slate-500">{label}</dt>'
-            f'<dd class="max-w-[58%] break-words text-right text-sm font-medium text-slate-800">'
+            '<div>'
+            f'<dt>{label}</dt>'
+            f'<dd class="font-bold">'
             f'{text("Enabled" if configuration_values.get(key) is True else "Disabled" if configuration_values.get(key) is False else configuration_values.get(key))}'
             "</dd></div>"
             for label, key in labels
@@ -159,46 +156,52 @@ def render_dashboard(snapshot: dict[str, object]) -> str:
     tasks = snapshot["tasks"]
     reminders = snapshot["reminders"]
     configuration = snapshot["configuration"]
-    service_cards = "".join(
-        '<li class="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">'
-        '<div class="min-w-0"><p class="font-medium capitalize text-slate-800">'
-        f"{text(name)}</p><p class=\"mt-0.5 text-xs text-slate-500\">Last heartbeat: {timestamp(details['updated_at'])}</p>"
+    service_rows = "".join(
+        '<li class="flex items-start justify-between gap-4 px-3 py-3 text-xs">'
+        '<div class="min-w-0"><p class="font-bold uppercase">'
+        f"{text(name)}</p><p class=\"mt-1\">LAST_HEARTBEAT: {timestamp(details['updated_at'])}</p>"
         f"</div>{status_badge(details['status'])}</li>"
         for name, details in services.items()
     )
     upcoming = "".join(
-        '<li class="rounded-lg border border-line bg-slate-50 px-3.5 py-3">'
-        f'<p class="truncate font-medium text-slate-800">{text(item["title"])}</p>'
-        f'<p class="mt-1 text-xs text-slate-500">{timestamp(item["scheduled_at"])} · '
+        '<li class="px-3 py-3 text-xs">'
+        f'<p class="break-words font-bold">{text(item["title"])}</p>'
+        f'<p class="mt-1">SCHEDULED_AT: {timestamp(item["scheduled_at"])} · '
         f'{text("Repeats " + item["recurrence"] if item["recurrence"] else "One-time")}</p></li>'
         for item in reminders["upcoming"]
-    ) or '<li class="rounded-lg border border-dashed border-line bg-slate-50 px-3.5 py-5 text-center text-slate-500">No upcoming reminders.</li>'
+    ) or '<li class="px-3 py-4 text-xs">(none recorded)</li>'
     failures = "".join(
-        '<li class="rounded-lg border border-red-100 bg-red-50/50 px-3.5 py-3">'
-        f'<div class="flex items-start justify-between gap-3"><p class="min-w-0 truncate font-medium text-slate-800">{text(item["title"])}</p>'
-        f'<span class="shrink-0 text-xs font-medium text-red-700">Attempt {text(item["attempt_count"])}</span></div>'
-        f'<p class="mt-1.5 line-clamp-2 text-xs leading-5 text-slate-600">{text(item["error"])}</p>'
-        f'<p class="mt-1.5 text-xs text-slate-500">{timestamp(item["updated_at"])}</p></li>'
+        '<li class="px-3 py-3 text-xs">'
+        f'<div class="flex items-start justify-between gap-3"><p class="min-w-0 break-words font-bold">{text(item["title"])}</p>'
+        f'<span class="shrink-0 text-alert">ATTEMPT:{text(item["attempt_count"])}</span></div>'
+        f'<p class="mt-1 break-words">ERROR: {text(item["error"])}</p>'
+        f'<p class="mt-1">RECORDED_AT: {timestamp(item["updated_at"])}</p></li>'
         for item in reminders["recent_failures"]
-    ) or '<li class="rounded-lg border border-dashed border-line bg-slate-50 px-3.5 py-5 text-center text-slate-500">No failed deliveries.</li>'
-    notices = "".join(f"<li>{text(notice)}</li>" for notice in snapshot["notices"])
-    notices = notices or "<li>No notices.</li>"
+    ) or '<li class="px-3 py-4 text-xs">(none recorded)</li>'
+    notices = "".join(f'<li class="px-3 py-3 text-xs">{text(notice)}</li>' for notice in snapshot["notices"])
+    notices = notices or '<li class="px-3 py-3 text-xs">(none recorded)</li>'
+    activity_rows = "".join((
+        '<div><dt>MESSAGE_TOTAL</dt><dd class="font-bold tabular-nums">' + text(messages["total"]) + "</dd></div>",
+        '<div><dt>MESSAGES_LAST_24_HOURS</dt><dd class="font-bold tabular-nums">' + text(messages["last_24_hours"]) + "</dd></div>",
+        '<div><dt>LATEST_MESSAGE_AT</dt><dd>' + timestamp(messages["latest_at"]) + "</dd></div>",
+        '<div><dt>MEMORY_TOTAL</dt><dd class="font-bold tabular-nums">' + text(memories["total"]) + "</dd></div>",
+        '<div><dt>MEMORIES_EXPIRING_7_DAYS</dt><dd class="font-bold tabular-nums">' + text(memories["expiring_within_7_days"]) + "</dd></div>",
+        count_rows(messages["by_role"], (("messages_user", "user"), ("messages_assistant", "assistant"))),
+        count_rows(memories["by_kind"], (("memory_fact", "fact"), ("memory_person", "person"), ("memory_preference", "preference"), ("memory_project", "project"), ("memory_routine", "routine"))),
+    ))
+    queue_rows = "".join((
+        count_rows(tasks["by_status"], (("tasks_active", "active"), ("tasks_completed", "completed"), ("tasks_cancelled", "cancelled"))),
+        count_rows(reminders["by_status"], (("reminders_pending", "pending"), ("reminders_leased", "leased"), ("reminders_delivered", "delivered"), ("reminders_failed", "failed"))),
+        '<div><dt>REMINDERS_OVERDUE</dt><dd class="font-bold tabular-nums">' + text(reminders["overdue_pending"]) + "</dd></div>",
+    ))
     return render_template(
         "dashboard.html",
         {
             "status": text(snapshot["status"]),
             "status_badge": status_badge(snapshot["status"]),
-            "service_cards": service_cards,
-            "message_total": text(messages["total"]),
-            "message_last_24_hours": text(messages["last_24_hours"]),
-            "message_latest_at": timestamp(messages["latest_at"]),
-            "message_roles": count_tiles(messages["by_role"], ("user", "assistant")),
-            "memory_total": text(memories["total"]),
-            "expiring_memories": text(memories["expiring_within_7_days"]),
-            "memory_kinds": count_tiles(memories["by_kind"], ("fact", "person", "preference", "project", "routine")),
-            "task_statuses": count_tiles(tasks["by_status"], ("active", "completed", "cancelled")),
-            "reminder_statuses": count_tiles(reminders["by_status"], ("pending", "leased", "delivered", "failed")),
-            "overdue_pending": text(reminders["overdue_pending"]),
+            "service_rows": service_rows,
+            "activity_rows": activity_rows,
+            "queue_rows": queue_rows,
             "upcoming": upcoming,
             "failures": failures,
             "configuration": configuration_rows(configuration),
