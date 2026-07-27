@@ -252,6 +252,37 @@ def list_recent_items(limit: int = 20) -> list[BrainItem]:
     return [item_from_row(row) for row in rows]
 
 
+def brain_graph_data() -> dict[str, list[dict[str, object]]]:
+    initialize_schema()
+    with database_connection() as connection:
+        rows = connection.execute(
+            "SELECT id, title, summary, item_type, tags_json, source_url "
+            "FROM brain_items WHERE status = 'active' ORDER BY created_at, id"
+        ).fetchall()
+
+    nodes = [
+        {
+            "id": row["id"],
+            "title": row["title"],
+            "summary": row["summary"],
+            "item_type": row["item_type"],
+            "tags": json.loads(row["tags_json"]),
+            "source_url": row["source_url"],
+        }
+        for row in rows
+    ]
+    edges: list[dict[str, object]] = []
+    for index, source in enumerate(nodes):
+        source_tags = set(source["tags"])
+        for target in nodes[index + 1:]:
+            shared_tags = sorted(source_tags & set(target["tags"]))
+            if shared_tags:
+                edges.append(
+                    {"source": source["id"], "target": target["id"], "tags": shared_tags}
+                )
+    return {"nodes": nodes, "edges": edges}
+
+
 def search_items(
     query: str, limit: int = 20, item_type: str | None = None
 ) -> list[BrainItem]:

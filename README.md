@@ -85,6 +85,10 @@ internet over plain HTTP. The dashboard shows aggregate activity and
 operational state only; it never displays chat or memory contents and cannot
 change Roxy data.
 
+After signing in, open `/brain` for a map of active saved items. It shows only
+brain items, connecting items that share tags; it never includes retained chat
+history. The matching authenticated JSON data is available at `/brain-data`.
+
 Health and readiness endpoints remain public for orchestration. Restrict their
 network access at your deployment boundary when appropriate.
 

@@ -77,6 +77,82 @@ class WebTests(unittest.TestCase):
         with patch("src.web.dashboard.get_dashboard_snapshot", return_value=SAFE_SNAPSHOT):
             self.assertEqual(client.get("/dashboard-data").json(), SAFE_SNAPSHOT)
 
+    def test_brain_page_requires_login(self):
+        response = TestClient(app).get("/brain", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/login")
+
+    def test_brain_data_requires_login(self):
+        response = TestClient(app).get("/brain-data", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/login")
+
+    def test_brain_data_returns_active_graph_for_an_authenticated_session(self):
+        graph = {
+            "nodes": [{"id": 1, "title": "Focus", "summary": "Focus note", "item_type": "goal", "tags": ["focus"], "source_url": None}],
+            "edges": [],
+        }
+        client = self.authenticated_client()
+
+        with patch("src.web.dashboard.get_brain_graph_data", return_value=graph):
+            response = client.get("/brain-data")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), graph)
+
+    def test_brain_page_renders_svg_and_accessible_item_details(self):
+        graph = {
+            "nodes": [{"id": 1, "title": "Focus", "summary": "Focus note", "item_type": "goal", "tags": ["focus"], "source_url": "https://example.com"}],
+            "edges": [],
+        }
+        client = self.authenticated_client()
+
+        with patch("src.web.dashboard.get_brain_graph_data", return_value=graph):
+            response = client.get("/brain")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('<svg', response.text)
+        self.assertIn("Focus note", response.text)
+        self.assertIn("https://example.com", response.text)
+
+    def test_brain_page_does_not_render_unsafe_source_url_as_a_link(self):
+        graph = {
+            "nodes": [{"id": 1, "title": "Unsafe", "summary": "Unsafe link", "item_type": "idea", "tags": [], "source_url": "javascript:alert(1)"}],
+            "edges": [],
+        }
+        client = self.authenticated_client()
+
+        with patch("src.web.dashboard.get_brain_graph_data", return_value=graph):
+            response = client.get("/brain")
+
+        self.assertNotIn('href="javascript:alert(1)"', response.text)
+        self.assertIn("javascript:alert(1)", response.text)
+
+    def test_brain_page_returns_unavailable_when_database_fails(self):
+        client = self.authenticated_client()
+
+        with patch(
+            "src.web.dashboard.get_brain_graph_data",
+            side_effect=sqlite3.OperationalError,
+        ):
+            response = client.get("/brain")
+
+        self.assertEqual(response.status_code, 503)
+
+    def test_brain_data_returns_unavailable_when_database_fails(self):
+        client = self.authenticated_client()
+
+        with patch(
+            "src.web.dashboard.get_brain_graph_data",
+            side_effect=sqlite3.OperationalError,
+        ):
+            response = client.get("/brain-data")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"status": "unavailable"})
+
     def test_dashboard_renders_readable_database_fields_instead_of_raw_data_dictionaries(self):
         snapshot = {
             **SAFE_SNAPSHOT,

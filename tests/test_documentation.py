@@ -14,3 +14,5 @@ class DocumentationTests(unittest.TestCase):
         readme = Path("README.md").read_text()
         self.assertIn("/brain_pause", readme)
         self.assertIn("Tasks are brain items", readme)
+        self.assertIn("/brain", readme)
+        self.assertIn("share tags", readme)

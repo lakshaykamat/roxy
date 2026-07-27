@@ -30,6 +30,10 @@ def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
     ).fetchone() is not None
 
 
+def get_brain_graph_data() -> dict[str, list[dict[str, object]]]:
+    return brain.brain_graph_data()
+
+
 def get_dashboard_snapshot(now: datetime | None = None) -> dict[str, object]:
     current_time = (now or utc_now()).astimezone(timezone.utc)
     cutoff = format_timestamp(current_time - timedelta(days=1))

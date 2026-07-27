@@ -4,6 +4,7 @@ import secrets
 import sqlite3
 from pathlib import Path
 from urllib.parse import parse_qs
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -218,6 +219,72 @@ def render_template(template_name: str, values: dict[str, str]) -> str:
     return template
 
 
+def render_brain_map(graph: dict[str, list[dict[str, object]]]) -> str:
+    nodes = graph["nodes"]
+    edges = graph["edges"]
+    colors = {
+        "idea": "#6750a4", "fact": "#2563eb", "preference": "#db2777",
+        "person": "#ea580c", "project": "#0f766e", "goal": "#16a34a",
+        "decision": "#ca8a04", "task": "#dc2626", "reference": "#4f46e5",
+        "reflection": "#7c3aed",
+    }
+    columns = min(5, max(1, len(nodes)))
+    rows = max(1, (len(nodes) + columns - 1) // columns)
+    positions = {
+        node["id"]: (
+            (index % columns + 1) * 900 // (columns + 1),
+            (index // columns + 1) * 620 // (rows + 1),
+        )
+        for index, node in enumerate(nodes)
+    }
+    shared_tag_counts = {
+        node["id"]: sum(
+            len(edge["tags"])
+            for edge in edges
+            if node["id"] in (edge["source"], edge["target"])
+        )
+        for node in nodes
+    }
+
+    def text(value: object) -> str:
+        return html.escape(str(value))
+
+    def source_url_markup(value: object) -> str:
+        url = str(value)
+        parsed_url = urlparse(url)
+        if parsed_url.scheme in {"http", "https"} and parsed_url.netloc:
+            return f'<a class="mt-2 inline-block text-sm text-violet underline" href="{text(url)}">{text(url)}</a>'
+        return f'<p class="mt-2 break-all text-sm text-slate-600">{text(url)}</p>'
+
+    edge_markup = "".join(
+        f'<line x1="{positions[edge["source"]][0]}" y1="{positions[edge["source"]][1]}" '
+        f'x2="{positions[edge["target"]][0]}" y2="{positions[edge["target"]][1]}" '
+        'stroke="#94a3b8" stroke-width="2" />'
+        for edge in edges
+    )
+    node_markup = "".join(
+        f'<g><circle cx="{positions[node["id"]][0]}" cy="{positions[node["id"]][1]}" '
+        f'r="{18 + min(shared_tag_counts[node["id"]], 4) * 3}" fill="{colors.get(str(node["item_type"]), "#475569")}" />'
+        f'<text x="{positions[node["id"]][0]}" y="{positions[node["id"]][1] + 42}" text-anchor="middle" '
+        'font-size="13" fill="#172033">'
+        f'{text(str(node["title"])[:24])}</text></g>'
+        for node in nodes
+    )
+    detail_markup = "".join(
+        '<li class="border-b border-slate-200 py-4 last:border-0">'
+        f'<h2 class="font-semibold text-slate-900">{text(node["title"])}</h2>'
+        f'<p class="mt-1 text-sm text-slate-600">{text(node["summary"])}</p>'
+        f'<p class="mt-2 text-xs font-medium uppercase tracking-wide text-slate-500">{text(node["item_type"])} · {text(", ".join(node["tags"]) or "untagged")}</p>'
+        + (source_url_markup(node["source_url"]) if node["source_url"] else "")
+        + '</li>'
+        for node in nodes
+    ) or '<li class="py-4 text-sm text-slate-600">No active brain items yet.</li>'
+    return render_template(
+        "brain.html",
+        {"edges": edge_markup, "nodes": node_markup, "details": detail_markup},
+    )
+
+
 def load_snapshot() -> dict[str, object] | None:
     def unavailable(_: BaseException) -> None:
         logger.exception("Unable to load dashboard snapshot")
@@ -225,6 +292,18 @@ def load_snapshot() -> dict[str, object] | None:
 
     return try_catch(
         dashboard.get_dashboard_snapshot,
+        handle_error=unavailable,
+        exception_types=sqlite3.Error,
+    )
+
+
+def load_brain_graph() -> dict[str, list[dict[str, object]]] | None:
+    def unavailable(_: BaseException) -> None:
+        logger.exception("Unable to load brain graph")
+        return None
+
+    return try_catch(
+        dashboard.get_brain_graph_data,
         handle_error=unavailable,
         exception_types=sqlite3.Error,
     )
@@ -248,6 +327,26 @@ async def dashboard_data(request: Request):
     if snapshot is None:
         return JSONResponse({"status": "unavailable"}, status_code=503)
     return JSONResponse(snapshot)
+
+
+@app.get("/brain")
+async def brain_page(request: Request):
+    if redirect := dashboard_redirect(request):
+        return redirect
+    graph = load_brain_graph()
+    if graph is None:
+        return HTMLResponse(render_template("unavailable.html", {}), status_code=503)
+    return HTMLResponse(render_brain_map(graph))
+
+
+@app.get("/brain-data")
+async def brain_data(request: Request):
+    if redirect := dashboard_redirect(request):
+        return redirect
+    graph = load_brain_graph()
+    if graph is None:
+        return JSONResponse({"status": "unavailable"}, status_code=503)
+    return JSONResponse(graph)
 
 
 @app.post("/logout")

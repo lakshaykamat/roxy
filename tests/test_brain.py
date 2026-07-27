@@ -121,6 +121,29 @@ class BrainTests(unittest.TestCase):
 
         self.assertFalse(brain.export_brain_data()["brain_settings"]["auto_capture_enabled"])
 
+    def test_graph_data_links_active_items_sharing_a_tag(self):
+        first = brain.create_item(
+            "Block afternoons", "Focus block", "Block afternoons", "goal",
+            ["focus"], "text", "automatic",
+        )
+        second = brain.create_item(
+            "Keep afternoons clear", "No meetings", "Keep afternoons clear",
+            "decision", ["focus"], "text", "automatic",
+        )
+        brain.create_item(
+            "Finished note", "Finished", "Finished note", "idea",
+            ["focus"], "text", "automatic",
+        )
+        brain.archive_item(3)
+
+        graph = brain.brain_graph_data()
+
+        self.assertEqual([node["id"] for node in graph["nodes"]], [first.id, second.id])
+        self.assertEqual(
+            graph["edges"],
+            [{"source": first.id, "target": second.id, "tags": ["focus"]}],
+        )
+
     def test_automatic_save_retries_locked_database_without_duplicates(self):
         arguments = (
             '{"content":"Idea","title":"Idea","summary":"An idea",'
