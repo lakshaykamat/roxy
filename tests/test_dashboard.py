@@ -72,6 +72,37 @@ class DashboardTests(unittest.TestCase):
             "Keep focus", "Focus", "Keep focus", "goal", [], "text", "explicit"
         )
 
-        self.assertFalse(dashboard.delete_brain_item(item.id, "Other"))
-        self.assertTrue(dashboard.delete_brain_item(item.id, "Focus"))
+        self.assertEqual(dashboard.delete_brain_item(item.id, "Other"), "mismatch")
+        self.assertEqual(dashboard.delete_brain_item(item.id, "Focus"), "deleted")
         self.assertIsNone(brain_store.get_item(item.id))
+
+    def test_archived_and_deleted_items_are_removed_from_active_relations(self):
+        first = brain_store.save_item(
+            "Build the roadmap", "Roadmap", "Build the roadmap", "project", [], "text", "explicit"
+        )
+        second = brain_store.save_item(
+            "Write the roadmap", "Draft", "Write the roadmap", "goal", [], "text", "explicit"
+        )
+        brain_store.create_relation(
+            first.id, second.id, "supports", "The draft supports the roadmap.", 0.9, "direct"
+        )
+
+        self.assertTrue(dashboard.archive_brain_item(second.id))
+        archived_snapshot = dashboard.get_brain_snapshot()
+        roadmap = next(item for item in archived_snapshot["items"] if item["id"] == first.id)
+        self.assertEqual(roadmap["relations"], [])
+
+        replacement = brain_store.save_item(
+            "Draft a launch", "Launch", "Draft a launch", "goal", [], "text", "explicit"
+        )
+        brain_store.create_relation(
+            first.id, replacement.id, "supports", "The launch supports the roadmap.", 0.9, "direct"
+        )
+        self.assertEqual(dashboard.delete_brain_item(replacement.id, "Launch"), "deleted")
+        self.assertFalse(
+            any(
+                relation["source_item_id"] == replacement.id
+                or relation["target_item_id"] == replacement.id
+                for relation in brain_store.list_item_relations(first.id)
+            )
+        )

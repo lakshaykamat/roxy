@@ -27,7 +27,7 @@ class BrainStoreTests(unittest.TestCase):
         config.DATABASE_PATH = self.original_path
         self.directory.cleanup()
 
-    def test_migration_moves_memory_task_and_delivery_to_unified_tables(self):
+    def test_brain_items_and_tasks_share_the_current_schema(self):
         brain_store.save_item(
             "My sister Anya lives in Pune.", "Anya", "Anya lives in Pune.",
             "person", [], "text", "explicit",
@@ -40,7 +40,7 @@ class BrainStoreTests(unittest.TestCase):
         self.assertEqual((item.item_type, item.content), ("person", "My sister Anya lives in Pune."))
         self.assertEqual((deliveries[0].brain_item_id, task.id), (task.id, task.id))
 
-    def test_initialize_schema_migrates_legacy_tables_and_removes_them(self):
+    def test_initialize_schema_does_not_read_or_drop_legacy_tables(self):
         connection = sqlite3.connect(config.DATABASE_PATH)
         connection.execute("CREATE TABLE memories (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT)")
         connection.execute("CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT NOT NULL, timezone TEXT NOT NULL, status TEXT NOT NULL, recurrence_rule TEXT, next_due_at TEXT NOT NULL, created_at TEXT NOT NULL, completed_at TEXT)")
@@ -54,28 +54,11 @@ class BrainStoreTests(unittest.TestCase):
 
         brain_store.initialize_schema()
 
-        exported = brain_store.export_brain_data()
-        self.assertEqual(len(exported["brain_items"]), 2)
-        self.assertEqual(len(exported["reminder_deliveries"]), 1)
-        with sqlite3.connect(config.DATABASE_PATH) as migrated:
-            names = {row[0] for row in migrated.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        self.assertFalse({"memories", "tasks", "reminders", "service_heartbeats"} & names)
-
-    def test_list_recent_items_migrates_legacy_data(self):
-        timestamp = "2099-01-01T09:00:00+00:00"
-        with sqlite3.connect(config.DATABASE_PATH) as connection:
-            connection.execute(
-                "CREATE TABLE memories (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, "
-                "content TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT)"
+        with sqlite3.connect(config.DATABASE_PATH) as preserved:
+            self.assertEqual(
+                preserved.execute("SELECT content FROM memories").fetchone()[0], "Likes tea"
             )
-            connection.execute(
-                "INSERT INTO memories (kind, content, created_at) VALUES ('fact', 'Likes tea', ?)",
-                (timestamp,),
-            )
-
-        items = brain_store.list_recent_items()
-
-        self.assertEqual([(item.item_type, item.content) for item in items], [("fact", "Likes tea")])
+            self.assertEqual(brain_store.list_recent_items(), [])
 
     def test_repeated_capture_key_creates_one_item(self):
         first = brain_store.save_item("Idea", "Idea", "An idea", "idea", [], "text", "automatic", capture_key="telegram:7:12:12")
@@ -248,7 +231,7 @@ class BrainStoreTests(unittest.TestCase):
 
         self.assertFalse(brain_store.export_brain_data()["brain_settings"]["auto_capture_enabled"])
 
-    def test_graph_data_links_active_items_sharing_a_tag(self):
+    def test_graph_data_uses_only_stored_relations(self):
         first = brain_store.save_item(
             "Block afternoons", "Focus block", "Block afternoons", "goal",
             ["focus"], "text", "automatic",
@@ -266,10 +249,10 @@ class BrainStoreTests(unittest.TestCase):
         graph = brain_store.get_brain_graph()
 
         self.assertEqual([node["id"] for node in graph["nodes"]], [first.id, second.id])
-        self.assertEqual(
-            graph["edges"],
-            [{"source": first.id, "target": second.id, "tags": ["focus"]}],
-        )
+        self.assertEqual(graph["edges"], [])
+        brain_store.create_relation(first.id, second.id, "same domain", "Both records concern focus.", .9, "direct")
+        graph = brain_store.get_brain_graph()
+        self.assertEqual(graph["edges"][0]["relation_type"], "same domain")
 
     def test_automatic_save_retries_locked_database_without_duplicates(self):
         arguments = (

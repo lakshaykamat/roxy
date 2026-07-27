@@ -256,27 +256,18 @@ def render_brain_explorer(snapshot: dict[str, object]) -> str:
         '</li>'
         for item in items
     ) or '<li class="px-3 py-4 text-xs">(none recorded)</li>'
-    grouped_items: dict[str, list[dict[str, object]]] = {}
-    for item in items:
-        theme = item["tags"][0] if item["tags"] else item["item_type"]
-        date = str(item["captured_at"])[:10]
-        grouped_items.setdefault(f"{theme} / {date}", []).append(item)
     connection_markup = "".join(
-        '<section class="brain-group"><p class="mb-2 text-xs font-bold">'
-        + text(label.upper())
-        + '</p><div class="grid gap-3">'
-        + "".join(
-            '<button class="brain-node focus:outline-none focus:ring-2 focus:ring-accent" '
-            f'data-select-item="{text(item["id"])}" type="button"><span>{text(item["title"])}</span><small>'
-            + " · ".join(
+        '<button class="brain-node focus:outline-none focus:ring-2 focus:ring-accent" '
+        f'data-select-item="{text(item["id"])}" type="button"><span>{text(item["title"])}</span><small>'
+        + (
+            " · ".join(
                 f'{text(relation["relation_type"])} → {text(relation["related_item_title"])}'
                 for relation in item["relations"]
             )
-            + '</small></button>'
-            for item in group
+            or "No stored connections"
         )
-        + '</div></section>'
-        for label, group in grouped_items.items()
+        + '</small></button>'
+        for item in items
     ) or '<p class="p-3 text-xs">No active records to explore.</p>'
     details_markup = "".join(
         '<article class="brain-detail" data-item-detail '
@@ -286,7 +277,8 @@ def render_brain_explorer(snapshot: dict[str, object]) -> str:
         + (f'<p class="mt-2 text-xs">SOURCE: {source_url_markup(item["source_url"])}</p>' if item["source_url"] else "")
         + '<div class="mt-4"><p class="font-bold text-xs">CONNECTIONS</p><ul class="mt-2 space-y-2 text-xs">'
         + "".join(
-            f'<li><span class="font-bold">{text(relation["relation_type"])}</span> → {text(relation["related_item_title"])}: {text(relation["explanation"])}</li>'
+            f'<li><span class="font-bold">{text(relation["relation_type"])}</span> → {text(relation["related_item_title"])}: {text(relation["explanation"])} '
+            f'(ORIGIN: {text(relation.get("origin", "Not recorded"))} · CONFIDENCE: {text(f"{float(relation.get('confidence', 0)):.0%}")})</li>'
             for relation in item["relations"]
         )
         + '</ul></div><div class="mt-5 flex gap-2"><button class="border-2 border-ink px-3 py-1 text-xs font-bold hover:bg-ink hover:text-panel" data-archive-item="'
@@ -399,13 +391,15 @@ async def delete_brain_item(item_id: int, payload: DeleteRequest, request: Reque
         return redirect
     if not payload.confirmed or not payload.title.strip():
         return JSONResponse({"error": "Exact title confirmation is required."}, status_code=409)
-    deleted = run_brain_action(
+    delete_result = run_brain_action(
         lambda: dashboard.delete_brain_item(item_id, payload.title.strip())
     )
-    if deleted is None:
+    if delete_result is None:
         return JSONResponse({"error": "Brain data is unavailable."}, status_code=503)
-    if not deleted:
-        return JSONResponse({"error": "Brain item was not found or the title did not match."}, status_code=409)
+    if delete_result == "not_found":
+        return JSONResponse({"error": "Brain item was not found."}, status_code=404)
+    if delete_result != "deleted":
+        return JSONResponse({"error": "The exact active item title did not match."}, status_code=409)
     return {"ok": True, "id": item_id, "action": "deleted"}
 
 

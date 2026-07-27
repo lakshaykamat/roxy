@@ -19,28 +19,10 @@ def format_timestamp(value: datetime) -> str:
 
 
 def _initialize_schema(connection: sqlite3.Connection) -> None:
-    connection.execute("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT)")
-    columns = {row["name"] for row in connection.execute("PRAGMA table_info(messages)")}
-    if "expires_at" not in columns:
-        connection.execute("ALTER TABLE messages ADD COLUMN expires_at TEXT")
-        _set_expiry_for_existing_messages(connection)
-
-
-def _set_expiry_for_existing_messages(connection: sqlite3.Connection) -> None:
-    if config.HISTORY_RETENTION_DAYS <= 0:
-        return
-    rows = connection.execute(
-        "SELECT id, created_at FROM messages WHERE expires_at IS NULL"
-    ).fetchall()
-    for row in rows:
-        created_at = datetime.fromisoformat(row["created_at"])
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        expiry = created_at + timedelta(days=config.HISTORY_RETENTION_DAYS)
-        connection.execute(
-            "UPDATE messages SET expires_at = ? WHERE id = ?",
-            (format_timestamp(expiry), row["id"]),
-        )
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, role TEXT NOT NULL, "
+        "content TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT)"
+    )
 
 
 @contextmanager

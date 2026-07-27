@@ -1,8 +1,10 @@
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from src import config
 from src.knowledge import brain_store
+from src.knowledge.constants import BRAIN_ITEM_TYPES
 from src.core.database import read_only_database_connection
 from src.conversations.history import format_timestamp
 
@@ -71,11 +73,8 @@ def archive_brain_item(item_id: int) -> bool:
     return brain_store.archive_item(item_id)
 
 
-def delete_brain_item(item_id: int, title: str) -> bool:
-    item = brain_store.get_item(item_id)
-    if item is None or item.status != "active" or item.title != title:
-        return False
-    return brain_store.delete_item(item_id)
+def delete_brain_item(item_id: int, title: str) -> Literal["deleted", "mismatch", "not_found"]:
+    return brain_store.delete_active_item_with_title(item_id, title)
 
 
 def get_dashboard_snapshot(now: datetime | None = None) -> dict[str, object]:
@@ -105,7 +104,7 @@ def get_dashboard_snapshot(now: datetime | None = None) -> dict[str, object]:
             {"assistant": 0, "user": 0},
         ) if message_exists else {"assistant": 0, "user": 0}
         empty_memory_kinds = {
-            kind: 0 for kind in sorted(brain_store.BRAIN_ITEM_TYPES - {"task"})
+            kind: 0 for kind in sorted(BRAIN_ITEM_TYPES - {"task"})
         }
         memory_kinds = _count_by_value(
             connection, "SELECT item_type AS value, COUNT(*) AS count FROM brain_items WHERE item_type != 'task' GROUP BY item_type",

@@ -56,6 +56,7 @@ DASHBOARD_SESSION_SECRET=generate_a_long_random_secret
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | Create a bot through [@BotFather](https://t.me/BotFather) on Telegram. |
 | `OPENAI_API_KEY` | Create an API key in the [OpenAI Platform](https://platform.openai.com/api-keys). |
+| `WEB_SEARCH_MODEL` | Optional OpenAI model used for cited web research. Defaults to Roxy's OpenAI model. |
 | `OPENAI_TRANSCRIPTION_MODEL` | Optional OpenAI model for Telegram voice-note transcription. Defaults to `gpt-4o-mini-transcribe`. |
 | `ALLOWED_USER_ID` | Your numeric Telegram user ID. You can retrieve it with [@userinfobot](https://t.me/userinfobot). |
 | `TASK_TIMEZONE` | IANA timezone used when a reminder has no timezone. Defaults to `Asia/Kolkata`. |
@@ -82,12 +83,33 @@ then sign in through `/login`.
 For network access, terminate HTTPS at a reverse proxy and set
 `DASHBOARD_SECURE_COOKIES=true`. Do not expose the dashboard directly to the
 internet over plain HTTP. The dashboard shows aggregate activity and
-operational state only; it never displays chat or memory contents and cannot
-change Roxy data.
+operational state only; it never displays retained chat history.
 
-After signing in, open `/brain` for a map of active saved items. It shows only
-brain items, connecting items that share tags; it never includes retained chat
-history. The matching authenticated JSON data is available at `/brain-data`.
+After signing in, open `/brain` for active Brain captures, their source links,
+and stored thought connections. Connections are shown only when Roxy has saved
+an explained relation: `same entity`, `same domain`, or `related topic
+(inferred)`. Each relation displays its direct or inferred origin and
+confidence; matching capture dates or tags alone never create a displayed
+connection. The matching authenticated JSON data is available at `/brain-data`.
+
+The Brain page can archive an active item immediately. Permanent deletion
+requires an explicit in-page confirmation and the item's exact active title.
+
+## Brain sources and research
+
+Ask Roxy to save a thought, a public link, or a list of links. Public links are
+limited to public HTTP(S) destinations, are rechecked after redirects, time out
+after 10 seconds, and are capped at 1 MiB. When a readable page cannot provide
+useful text, Roxy keeps it as a bookmark or asks for a short manual description
+instead of guessing.
+
+You can also ask natural-language questions such as “find current SQLite FTS5
+guidance.” Roxy's web research returns cited results but does not save them
+unless you explicitly ask. Explicit saves and eligible automatic Brain saves
+are analyzed for concise metadata and safe thought connections. At 3:00 AM in
+`TASK_TIMEZONE`, the reminder worker revisits recent active items and older
+unconnected items to refresh eligible connections; it never creates a nightly
+note or sends a Telegram message for that work.
 
 Health and readiness endpoints remain public for orchestration. Restrict their
 network access at your deployment boundary when appropriate.

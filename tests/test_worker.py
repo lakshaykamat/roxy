@@ -94,6 +94,14 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(processed)
 
+    async def test_run_introspection_if_due_runs_once_after_three_am(self):
+        at_three_am = datetime(2026, 7, 27, 3, 0, tzinfo=timezone.utc)
+        with patch("src.reminders.worker.refresh_brain_connections", new=AsyncMock(return_value=0)) as refresh:
+            self.assertTrue(await self.worker.run_introspection_if_due(at_three_am))
+            self.assertFalse(await self.worker.run_introspection_if_due(at_three_am))
+
+        refresh.assert_awaited_once_with(at_three_am)
+
     def test_retry_delay_is_bounded_exponential_backoff(self):
         self.assertEqual(retry_delay(1).total_seconds(), 60)
         self.assertEqual(retry_delay(2).total_seconds(), 120)

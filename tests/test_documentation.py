@@ -15,4 +15,6 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("Pause brain", readme)
         self.assertIn("Tasks are brain items", readme)
         self.assertIn("My brain", readme)
-        self.assertIn("share tags", readme)
+        self.assertIn("stored thought connections", readme)
+        self.assertIn("exact active title", readme)
+        self.assertIn("3:00 AM", readme)

@@ -1,7 +1,8 @@
 import asyncio
 import logging
 import sqlite3
-from datetime import timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from telegram import Bot
 from telegram.error import NetworkError, RetryAfter, TelegramError, TimedOut
@@ -14,9 +15,11 @@ from src.config import (
     TELEGRAM_POOL_TIMEOUT_SECONDS,
     TELEGRAM_READ_TIMEOUT_SECONDS,
     TELEGRAM_WRITE_TIMEOUT_SECONDS,
+    TASK_TIMEZONE,
 )
 from src.prompts.system import SYSTEM_PROMPT
 from src.core.errors import try_async
+from src.knowledge.introspection import next_introspection_at, refresh_brain_connections
 from src.reminders import repository
 from src.core.llm import ask_llm
 
@@ -30,6 +33,24 @@ class ReminderWorker:
     def __init__(self, bot: Bot, poll_interval_seconds: int = 10):
         self.bot = bot
         self.poll_interval_seconds = poll_interval_seconds
+        self._last_introspection_date: str | None = None
+
+    async def run_introspection_if_due(self, now: datetime | None = None) -> bool:
+        current_time = now or repository.utc_now()
+        local_time = current_time.astimezone(ZoneInfo(TASK_TIMEZONE))
+        if local_time.hour < 3 or self._last_introspection_date == local_time.date().isoformat():
+            return False
+
+        async def refresh() -> bool:
+            await refresh_brain_connections(current_time)
+            self._last_introspection_date = local_time.date().isoformat()
+            return True
+
+        async def log_failure(_: BaseException) -> bool:
+            logger.exception("Unable to refresh Brain connections")
+            return False
+
+        return await try_async(refresh, handle_error=log_failure)
 
     async def generate_reminder_message(self, reminder: repository.Reminder) -> str:
         async def create_message() -> str:
@@ -115,7 +136,12 @@ class ReminderWorker:
 
     async def run(self) -> None:
         logger.info("Reminder worker started")
+        scheduled_introspection = next_introspection_at(repository.utc_now(), TASK_TIMEZONE)
         while True:
+            now = repository.utc_now()
+            if now >= scheduled_introspection:
+                asyncio.create_task(self.run_introspection_if_due(now))
+                scheduled_introspection = next_introspection_at(now, TASK_TIMEZONE)
             processed_reminder = await self.process_next_reminder()
             if not processed_reminder:
                 await asyncio.sleep(self.poll_interval_seconds)

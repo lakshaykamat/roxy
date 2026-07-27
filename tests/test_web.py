@@ -51,6 +51,8 @@ BRAIN_SNAPSHOT = {
             "related_item_title": "Plan",
             "relation_type": "supports",
             "explanation": "Focus supports the project plan.",
+            "origin": "direct",
+            "confidence": 0.9,
         }],
     }],
 }
@@ -139,9 +141,29 @@ class WebTests(unittest.TestCase):
         self.assertIn("SAVED_ITEMS", response.text)
         self.assertIn("Focus note", response.text)
         self.assertIn("Focus supports the project plan.", response.text)
+        self.assertIn("ORIGIN: direct", response.text)
+        self.assertIn("CONFIDENCE: 90%", response.text)
         self.assertIn('datetime="2026-07-25T12:00:00+00:00"', response.text)
         self.assertIn('href="https://example.com/focus"', response.text)
         self.assertIn('data-delete-title="Focus"', response.text)
+
+    def test_brain_page_only_shows_stored_relation_labels(self):
+        snapshot = {
+            **BRAIN_SNAPSHOT,
+            "items": [
+                {
+                    **BRAIN_SNAPSHOT["items"][0],
+                    "tags": ["domain:work"],
+                    "captured_at": "2026-07-25T12:00:00+00:00",
+                }
+            ],
+        }
+
+        rendered = render_brain_explorer(snapshot)
+
+        self.assertIn("supports → Plan", rendered)
+        self.assertNotIn("DOMAIN:WORK / 2026-07-25", rendered)
+        self.assertNotIn("capture date", rendered)
 
     def test_brain_page_does_not_render_unsafe_source_url_as_a_link(self):
         snapshot = {**BRAIN_SNAPSHOT, "items": [{**BRAIN_SNAPSHOT["items"][0], "source_url": "javascript:alert(1)"}]}
@@ -211,7 +233,7 @@ class WebTests(unittest.TestCase):
     def test_delete_requires_the_active_item_title_to_match(self):
         client = self.authenticated_client()
 
-        with patch("src.web.dashboard.delete_brain_item", return_value=False):
+        with patch("src.web.dashboard.delete_brain_item", return_value="mismatch"):
             response = client.post(
                 "/brain/items/7/delete",
                 json={"confirmed": True, "title": "Different title"},
@@ -219,10 +241,21 @@ class WebTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 409)
 
+    def test_delete_returns_not_found_for_missing_item(self):
+        client = self.authenticated_client()
+
+        with patch("src.web.dashboard.delete_brain_item", return_value="not_found"):
+            response = client.post(
+                "/brain/items/7/delete",
+                json={"confirmed": True, "title": "Focus"},
+            )
+
+        self.assertEqual(response.status_code, 404)
+
     def test_delete_removes_an_item_after_named_confirmation(self):
         client = self.authenticated_client()
 
-        with patch("src.web.dashboard.delete_brain_item", return_value=True):
+        with patch("src.web.dashboard.delete_brain_item", return_value="deleted"):
             response = client.post(
                 "/brain/items/7/delete",
                 json={"confirmed": True, "title": "Focus"},

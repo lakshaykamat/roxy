@@ -3,21 +3,11 @@ import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Iterator
+from typing import Iterator, Literal
 
 from src.conversations.history import database_connection, format_timestamp
 from src.knowledge.capture_planner import Capture, CapturePlan
-
-
-BRAIN_ITEM_TYPES = frozenset(
-    {
-        "idea", "fact", "preference", "person", "project", "goal", "decision",
-        "task", "reference", "reflection",
-    }
-)
-RELATION_TYPES = frozenset(
-    {"about", "supports", "contradicts", "continues", "decides", "updates", "source_for"}
-)
+from src.knowledge.constants import BRAIN_ITEM_TYPES, RELATION_TYPES
 
 
 @dataclass(frozen=True)
@@ -58,10 +48,6 @@ def parse_timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value).astimezone(timezone.utc)
 
 
-def _tables(connection: sqlite3.Connection) -> set[str]:
-    return {row["name"] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-
-
 def _create_brain_tables(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE TABLE IF NOT EXISTS brain_settings ("
@@ -72,7 +58,7 @@ def _create_brain_tables(connection: sqlite3.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS brain_items ("
         "id INTEGER PRIMARY KEY, content TEXT NOT NULL, title TEXT NOT NULL, "
         "summary TEXT NOT NULL, item_type TEXT NOT NULL, tags_json TEXT NOT NULL, "
-        "source_type TEXT NOT NULL, source_url TEXT, capture_mode TEXT NOT NULL, "
+        "source_type TEXT NOT NULL, source_url TEXT, source_published_at TEXT, capture_mode TEXT NOT NULL, "
         "capture_key TEXT UNIQUE, status TEXT NOT NULL, due_at TEXT, timezone TEXT, "
         "recurrence_rule TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
         "last_recalled_at TEXT, completed_at TEXT)"
@@ -109,14 +95,6 @@ def _create_reminder_table(connection: sqlite3.Connection) -> None:
         "lease_token TEXT, attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT, "
         "delivered_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
     )
-
-
-def _add_source_published_at(connection: sqlite3.Connection) -> None:
-    columns = {
-        row["name"] for row in connection.execute("PRAGMA table_info(brain_items)")
-    }
-    if "source_published_at" not in columns:
-        connection.execute("ALTER TABLE brain_items ADD COLUMN source_published_at TEXT")
 
 
 def _create_indexes(connection: sqlite3.Connection) -> None:
@@ -178,78 +156,20 @@ def _initialize_schema(connection: sqlite3.Connection) -> None:
     _create_brain_tables(connection)
     _create_capture_tables(connection)
     _create_reminder_table(connection)
-    _add_source_published_at(connection)
     _create_indexes(connection)
     _create_search_index(connection)
     _initialize_settings(connection)
 
 
-def _migrate_legacy_data(connection: sqlite3.Connection) -> None:
-    tables = _tables(connection)
-    if not {"memories", "tasks", "reminders", "service_heartbeats"} & tables:
-        return
-    task_ids: dict[int, int] = {}
-    if "memories" in tables:
-        for row in connection.execute("SELECT * FROM memories ORDER BY id"):
-            connection.execute(
-                "INSERT INTO brain_items "
-                "(content, title, summary, item_type, tags_json, source_type, "
-                "capture_mode, status, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, '[]', 'command', 'explicit', 'active', ?, ?)",
-                (
-                    row["content"], row["content"], row["content"], row["kind"],
-                    row["created_at"], row["created_at"],
-                ),
-            )
-    if "tasks" in tables:
-        for row in connection.execute("SELECT * FROM tasks ORDER BY id"):
-            cursor = connection.execute(
-                "INSERT INTO brain_items "
-                "(content, title, summary, item_type, tags_json, source_type, "
-                "capture_mode, status, due_at, timezone, recurrence_rule, created_at, "
-                "updated_at, completed_at) "
-                "VALUES (?, ?, ?, 'task', '[]', 'command', 'explicit', ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    row["title"], row["title"], row["title"], row["status"],
-                    row["next_due_at"], row["timezone"], row["recurrence_rule"],
-                    row["created_at"], row["completed_at"] or row["created_at"],
-                    row["completed_at"],
-                ),
-            )
-            task_ids[row["id"]] = cursor.lastrowid
-    if "reminders" in tables:
-        for row in connection.execute("SELECT * FROM reminders ORDER BY id"):
-            item_id = task_ids.get(row["task_id"])
-            if item_id is not None:
-                connection.execute(
-                    "INSERT INTO reminder_deliveries "
-                    "(id, brain_item_id, scheduled_at, status, lease_expires_at, "
-                    "lease_token, attempt_count, last_error, delivered_at, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        row["id"], item_id, row["scheduled_at"], row["status"],
-                        row["lease_expires_at"],
-                        row["lease_token"] if "lease_token" in row.keys() else None,
-                        row["attempt_count"], row["last_error"], row["delivered_at"],
-                        row["created_at"], row["updated_at"],
-                    ),
-                )
-    for name in ("reminders", "tasks", "memories", "service_heartbeats"):
-        if name in tables:
-            connection.execute(f"DROP TABLE {name}")
-
-
 @contextmanager
-def _brain_database(*, migrate_legacy_data: bool = True) -> Iterator[sqlite3.Connection]:
+def _brain_database() -> Iterator[sqlite3.Connection]:
     with database_connection() as connection:
         _initialize_schema(connection)
-        if migrate_legacy_data:
-            _migrate_legacy_data(connection)
         yield connection
 
 
 def initialize_schema() -> None:
-    with _brain_database(migrate_legacy_data=True):
+    with _brain_database():
         pass
 
 
@@ -295,7 +215,7 @@ def save_item(
     recurrence_rule: str | None = None,
 ) -> BrainItem:
     now = format_timestamp(utc_now())
-    with _brain_database(migrate_legacy_data=True) as connection:
+    with _brain_database() as connection:
         cursor = connection.execute(
             "INSERT OR IGNORE INTO brain_items "
             "(content, title, summary, item_type, tags_json, source_type, source_url, source_published_at, capture_mode, "
@@ -425,6 +345,7 @@ def get_item_capture_context(item_id: int) -> dict[str, object]:
             "brain_items.title AS related_item_title "
             "FROM brain_item_relations JOIN brain_items "
             "ON brain_items.id = CASE WHEN source_item_id = ? THEN target_item_id ELSE source_item_id END "
+            "AND brain_items.status = 'active' "
             "WHERE source_item_id = ? OR target_item_id = ? ORDER BY updated_at DESC",
             (item_id, item_id, item_id, item_id),
         ).fetchall()
@@ -482,16 +403,32 @@ def get_brain_graph() -> dict[str, list[dict[str, object]]]:
         }
         for row in rows
     ]
-    edges: list[dict[str, object]] = []
-    for index, source in enumerate(nodes):
-        source_tags = set(source["tags"])
-        for target in nodes[index + 1:]:
-            shared_tags = sorted(source_tags & set(target["tags"]))
-            if shared_tags:
-                edges.append(
-                    {"source": source["id"], "target": target["id"], "tags": shared_tags}
-                )
+    with _brain_database() as connection:
+        edges = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT source_item_id AS source, target_item_id AS target, relation_type, "
+                "explanation, confidence, origin FROM brain_item_relations "
+                "WHERE source_item_id IN (SELECT id FROM brain_items WHERE status = 'active') "
+                "AND target_item_id IN (SELECT id FROM brain_items WHERE status = 'active') "
+                "ORDER BY updated_at DESC"
+            )
+        ]
     return {"nodes": nodes, "edges": edges}
+
+
+def list_active_items(limit: int = 100) -> list[BrainItem]:
+    return list_recent_items(limit)
+
+
+def list_unconnected_active_items() -> list[BrainItem]:
+    with _brain_database() as connection:
+        rows = connection.execute(
+            "SELECT brain_items.* FROM brain_items WHERE status = 'active' AND NOT EXISTS ("
+            "SELECT 1 FROM brain_item_relations WHERE source_item_id = brain_items.id "
+            "OR target_item_id = brain_items.id) ORDER BY created_at DESC, id DESC"
+        ).fetchall()
+    return [brain_item_from_row(row) for row in rows]
 
 
 def search_items(
@@ -558,12 +495,45 @@ def export_brain_data() -> dict[str, object]:
 def delete_all_brain_data() -> None:
     with _brain_database() as connection:
         connection.execute("DELETE FROM reminder_deliveries")
+        connection.execute("DELETE FROM brain_item_relations")
+        connection.execute("DELETE FROM brain_capture_items")
+        connection.execute("DELETE FROM brain_captures")
         connection.execute("DELETE FROM brain_items")
         connection.execute("DELETE FROM brain_settings")
 
 
 def delete_item(item_id: int) -> bool:
     with _brain_database() as connection:
-        connection.execute("DELETE FROM reminder_deliveries WHERE brain_item_id = ?", (item_id,))
         cursor = connection.execute("DELETE FROM brain_items WHERE id = ?", (item_id,))
+        if cursor.rowcount:
+            connection.execute("DELETE FROM reminder_deliveries WHERE brain_item_id = ?", (item_id,))
+            connection.execute("DELETE FROM brain_capture_items WHERE brain_item_id = ?", (item_id,))
+            connection.execute(
+                "DELETE FROM brain_item_relations WHERE source_item_id = ? OR target_item_id = ?",
+                (item_id, item_id),
+            )
     return cursor.rowcount == 1
+
+
+def delete_active_item_with_title(
+    item_id: int, title: str
+) -> Literal["deleted", "mismatch", "not_found"]:
+    with _brain_database() as connection:
+        cursor = connection.execute(
+            "DELETE FROM brain_items WHERE id = ? AND title = ? AND status = 'active'",
+            (item_id, title),
+        )
+        if cursor.rowcount:
+            connection.execute("DELETE FROM reminder_deliveries WHERE brain_item_id = ?", (item_id,))
+            connection.execute("DELETE FROM brain_capture_items WHERE brain_item_id = ?", (item_id,))
+            connection.execute(
+                "DELETE FROM brain_item_relations WHERE source_item_id = ? OR target_item_id = ?",
+                (item_id, item_id),
+            )
+            return "deleted"
+        item = connection.execute(
+            "SELECT title, status FROM brain_items WHERE id = ?", (item_id,)
+        ).fetchone()
+    if item is None or item["status"] != "active":
+        return "not_found"
+    return "mismatch"

@@ -5,12 +5,14 @@ import sqlite3
 
 from src.core.errors import retry_async, try_async
 from src.knowledge import brain_store
+from src.knowledge.brain_analysis import analyze_and_save_capture, analyze_and_save_item
 from src.knowledge.capture_planner import build_capture_plan
+from src.knowledge.constants import BRAIN_ITEM_TYPES
 from src.knowledge.public_link_reader import read_public_link
 from src.knowledge.web_research import search_web
 
 logger = logging.getLogger(__name__)
-ITEM_TYPES = brain_store.BRAIN_ITEM_TYPES
+ITEM_TYPES = BRAIN_ITEM_TYPES
 
 DEFINITIONS = [
     {
@@ -146,9 +148,10 @@ async def save_brain_item(
         if source_url is not None and not isinstance(source_url, str):
             raise ValueError("Source URL must be text.")
         item = await retry_async(
-            lambda: asyncio.to_thread(
-                brain_store.save_item, _text(values, "content"), _text(values, "title"),
-                _text(values, "summary"), item_type, _tags(values), "text", capture_mode,
+            lambda: analyze_and_save_item(
+                _text(values, "content"), item_type, capture_mode,
+                title=_text(values, "title"), summary=_text(values, "summary"),
+                tags=_tags(values), source_type="text",
                 capture_key=capture_key if capture_mode == "automatic" else None,
                 source_url=source_url,
             ),
@@ -174,7 +177,7 @@ async def capture_brain_content(arguments: str) -> dict[str, object]:
             raise ValueError("URLs must be a list of links.")
         urls = list(dict.fromkeys(url.strip() for url in raw_urls if url.strip()))
         sources = await asyncio.gather(*(read_public_link(url) for url in urls))
-        capture_record = await asyncio.to_thread(brain_store.save_capture, build_capture_plan(request, sources))
+        capture_record = await analyze_and_save_capture(build_capture_plan(request, sources))
         items = await asyncio.to_thread(brain_store.list_capture_items, capture_record.id)
         unreadable = [source for source in sources if source.status == "manual_description"]
         result: dict[str, object] = {
