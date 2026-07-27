@@ -3,7 +3,7 @@ from collections.abc import Awaitable, Callable
 from src import config
 from src.expenses import tools as expenses
 from src.reminders import create_tool, manage_tool
-from src.knowledge import brain_tools
+from src.knowledge import tools
 
 # Executors return a result dict, or a coroutine resolving to one (async tools).
 ToolResult = dict[str, object]
@@ -12,16 +12,16 @@ ToolExecutor = Callable[[str], ToolResult | Awaitable[ToolResult]]
 TOOL_DEFINITIONS = [
     create_tool.DEFINITION,
     manage_tool.DEFINITION,
-    *brain_tools.DEFINITIONS,
+    *tools.DEFINITIONS,
 ]
 TOOL_EXECUTORS: dict[str, ToolExecutor] = {
-    "capture_brain_content": brain_tools.capture_brain_content,
-    "search_web": brain_tools.search_web,
+    "capture_brain_content": tools.capture_brain_content,
+    "search_web": tools.search_web,
     "schedule_task": create_tool.execute,
     "manage_reminders": manage_tool.execute,
-    "search_brain": brain_tools.search_brain,
-    "archive_brain_item": brain_tools.archive_brain_item,
-    "delete_brain_item": brain_tools.delete_brain_item,
+    "search_saved_items": tools.search_saved_items,
+    "archive_brain_item": tools.archive_brain_item,
+    "delete_brain_item": tools.delete_brain_item,
 }
 
 TOOL_INTENTS = {
@@ -51,7 +51,7 @@ TOOL_INTENTS = {
     },
     "brain_management": {
         "description": "Search, archive, or delete an already saved brain item.",
-        "tool_names": frozenset({"search_brain", "archive_brain_item", "delete_brain_item"}),
+        "tool_names": frozenset({"search_saved_items", "archive_brain_item", "delete_brain_item"}),
     },
 }
 
@@ -80,7 +80,7 @@ def execute_tool_call(
     name: str, arguments: str, *, capture_key: str | None = None,
 ) -> ToolResult | Awaitable[ToolResult]:
     if name == "save_brain_item":
-        return brain_tools.save_brain_item(arguments, capture_key=capture_key)
+        return tools.save_brain_item(arguments, capture_key=capture_key)
     executor = TOOL_EXECUTORS.get(name)
     if executor is None:
         return {"ok": False, "error": "That action is not available."}

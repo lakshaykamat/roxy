@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from src import config
 from src.conversations import history
-from src.knowledge import brain, service as privacy
+from src.knowledge import brain_store, data_management as privacy
 from src.reminders import repository as tasks
 
 
@@ -21,21 +21,21 @@ class MemoryTests(unittest.TestCase):
         self.directory.cleanup()
 
     def test_brain_search_returns_matching_item(self):
-        brain.create_item("My sister Anya lives in Pune.", "Anya", "Anya lives in Pune.", "person", [], "text", "explicit")
+        brain_store.save_item("My sister Anya lives in Pune.", "Anya", "Anya lives in Pune.", "person", [], "text", "explicit")
         self.assertEqual(
-            [item.content for item in brain.search_items("Anya")],
+            [item.content for item in brain_store.search_items("Anya")],
             ["My sister Anya lives in Pune."],
         )
 
     def test_delete_local_data_removes_messages_and_memories(self):
         history.add("user", "private note")
-        brain.create_item("Private preference", "Preference", "Private preference", "preference", [], "text", "explicit")
-        privacy.delete_local_data()
+        brain_store.save_item("Private preference", "Preference", "Private preference", "preference", [], "text", "explicit")
+        privacy.delete_user_data()
         self.assertEqual(history.get(), [])
-        self.assertEqual(brain.list_recent_items(), [])
+        self.assertEqual(brain_store.list_recent_items(), [])
 
     def test_export_local_data_is_json_safe(self):
-        json.dumps(privacy.export_local_data())
+        json.dumps(privacy.export_user_data())
 
     def test_export_local_data_includes_completed_tasks_and_reminders(self):
         task = tasks.create_task(
@@ -44,7 +44,7 @@ class MemoryTests(unittest.TestCase):
         )
         tasks.complete_task(task.id)
 
-        export = privacy.export_local_data()
+        export = privacy.export_user_data()
 
         self.assertEqual(export["brain_items"][0]["id"], task.id)
         self.assertEqual(export["brain_items"][0]["status"], "completed")

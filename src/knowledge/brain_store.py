@@ -1,10 +1,12 @@
 import json
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Iterator
 
 from src.conversations.history import database_connection, format_timestamp
-from src.knowledge.captures import Capture, CapturePlan
+from src.knowledge.capture_planner import Capture, CapturePlan
 
 
 BRAIN_ITEM_TYPES = frozenset(
@@ -12,6 +14,9 @@ BRAIN_ITEM_TYPES = frozenset(
         "idea", "fact", "preference", "person", "project", "goal", "decision",
         "task", "reference", "reflection",
     }
+)
+RELATION_TYPES = frozenset(
+    {"about", "supports", "contradicts", "continues", "decides", "updates", "source_for"}
 )
 
 
@@ -234,13 +239,21 @@ def _migrate_legacy_data(connection: sqlite3.Connection) -> None:
             connection.execute(f"DROP TABLE {name}")
 
 
-def initialize_schema() -> None:
+@contextmanager
+def _brain_database(*, migrate_legacy_data: bool = True) -> Iterator[sqlite3.Connection]:
     with database_connection() as connection:
         _initialize_schema(connection)
-        _migrate_legacy_data(connection)
+        if migrate_legacy_data:
+            _migrate_legacy_data(connection)
+        yield connection
 
 
-def item_from_row(row: sqlite3.Row) -> BrainItem:
+def initialize_schema() -> None:
+    with _brain_database(migrate_legacy_data=True):
+        pass
+
+
+def brain_item_from_row(row: sqlite3.Row) -> BrainItem:
     return BrainItem(
         id=row["id"],
         content=row["content"],
@@ -265,7 +278,7 @@ def item_from_row(row: sqlite3.Row) -> BrainItem:
     )
 
 
-def create_item(
+def save_item(
     content: str,
     title: str,
     summary: str,
@@ -282,9 +295,7 @@ def create_item(
     recurrence_rule: str | None = None,
 ) -> BrainItem:
     now = format_timestamp(utc_now())
-    with database_connection() as connection:
-        _initialize_schema(connection)
-        _migrate_legacy_data(connection)
+    with _brain_database(migrate_legacy_data=True) as connection:
         cursor = connection.execute(
             "INSERT OR IGNORE INTO brain_items "
             "(content, title, summary, item_type, tags_json, source_type, source_url, source_published_at, capture_mode, "
@@ -306,18 +317,18 @@ def create_item(
                 "SELECT id FROM brain_items WHERE capture_key = ?", (capture_key,)
             ).fetchone()["id"]
         row = connection.execute("SELECT * FROM brain_items WHERE id = ?", (row_id,)).fetchone()
-    return item_from_row(row)
+    return brain_item_from_row(row)
 
 
-def create_capture(plan: CapturePlan) -> Capture:
+def save_capture(plan: CapturePlan) -> Capture:
     captured_at = format_timestamp(utc_now())
-    with database_connection() as connection:
-        _initialize_schema(connection)
+    with _brain_database() as connection:
         cursor = connection.execute(
             "INSERT INTO brain_captures (request, analysis, rationale, captured_at) VALUES (?, ?, ?, ?)",
             (plan.request, plan.analysis, plan.rationale, captured_at),
         )
         capture_id = cursor.lastrowid
+        item_ids: list[int] = []
         for planned_item in plan.items:
             item_cursor = connection.execute(
                 "INSERT INTO brain_items "
@@ -335,42 +346,62 @@ def create_capture(plan: CapturePlan) -> Capture:
                 "INSERT INTO brain_capture_items (capture_id, brain_item_id) VALUES (?, ?)",
                 (capture_id, item_cursor.lastrowid),
             )
+            item_ids.append(item_cursor.lastrowid)
+        for relation in plan.relations:
+            if not isinstance(relation.source_item_index, int) or relation.source_item_index < 0:
+                raise ValueError("Relation source item index must identify a captured item.")
+            if relation.source_item_index >= len(item_ids):
+                raise ValueError("Relation source item index must identify a captured item.")
+            _create_relation(
+                connection, item_ids[relation.source_item_index], relation.target_item_id,
+                relation.relation_type, relation.explanation, relation.confidence, "planner",
+            )
     return Capture(capture_id, plan.request, plan.analysis, plan.rationale, captured_at)
 
 
-def items_for_capture(capture_id: int) -> list[BrainItem]:
-    initialize_schema()
-    with database_connection() as connection:
+def list_capture_items(capture_id: int) -> list[BrainItem]:
+    with _brain_database() as connection:
         rows = connection.execute(
             "SELECT brain_items.* FROM brain_items JOIN brain_capture_items "
             "ON brain_capture_items.brain_item_id = brain_items.id "
             "WHERE brain_capture_items.capture_id = ? ORDER BY brain_items.id",
             (capture_id,),
         ).fetchall()
-    return [item_from_row(row) for row in rows]
+    return [brain_item_from_row(row) for row in rows]
 
 
 def create_relation(
     source_id: int, target_id: int, relation_type: str, explanation: str,
     confidence: float, origin: str,
 ) -> None:
+    with _brain_database() as connection:
+        _create_relation(connection, source_id, target_id, relation_type, explanation, confidence, origin)
+
+
+def _create_relation(
+    connection: sqlite3.Connection, source_id: int, target_id: int, relation_type: str,
+    explanation: str, confidence: float, origin: str,
+) -> None:
+    if relation_type not in RELATION_TYPES:
+        raise ValueError("Unsupported brain relation type.")
+    if not explanation.strip():
+        raise ValueError("Relation explanation is required.")
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+        raise ValueError("Relation confidence must be between 0 and 1.")
     now = format_timestamp(utc_now())
-    with database_connection() as connection:
-        _initialize_schema(connection)
-        connection.execute(
-            "INSERT INTO brain_item_relations "
-            "(source_item_id, target_item_id, relation_type, explanation, confidence, origin, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(source_item_id, target_item_id, relation_type) DO UPDATE SET "
-            "explanation = excluded.explanation, confidence = excluded.confidence, "
-            "origin = excluded.origin, updated_at = excluded.updated_at",
-            (source_id, target_id, relation_type, explanation, confidence, origin, now, now),
-        )
+    connection.execute(
+        "INSERT INTO brain_item_relations "
+        "(source_item_id, target_item_id, relation_type, explanation, confidence, origin, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(source_item_id, target_item_id, relation_type) DO UPDATE SET "
+        "explanation = excluded.explanation, confidence = excluded.confidence, "
+        "origin = excluded.origin, updated_at = excluded.updated_at",
+        (source_id, target_id, relation_type, explanation.strip(), confidence, origin, now, now),
+    )
 
 
-def relations_for_item(item_id: int) -> list[dict[str, object]]:
-    initialize_schema()
-    with database_connection() as connection:
+def list_item_relations(item_id: int) -> list[dict[str, object]]:
+    with _brain_database() as connection:
         rows = connection.execute(
             "SELECT * FROM brain_item_relations WHERE source_item_id = ? OR target_item_id = ? "
             "ORDER BY updated_at DESC", (item_id, item_id)
@@ -378,9 +409,34 @@ def relations_for_item(item_id: int) -> list[dict[str, object]]:
     return [dict(row) for row in rows]
 
 
-def brain_timeline(limit: int = 20) -> list[dict[str, object]]:
-    initialize_schema()
-    with database_connection() as connection:
+def get_item_capture_context(item_id: int) -> dict[str, object]:
+    with _brain_database() as connection:
+        capture = connection.execute(
+            "SELECT brain_captures.analysis, brain_captures.captured_at "
+            "FROM brain_captures JOIN brain_capture_items "
+            "ON brain_capture_items.capture_id = brain_captures.id "
+            "WHERE brain_capture_items.brain_item_id = ? "
+            "ORDER BY brain_captures.captured_at DESC LIMIT 1",
+            (item_id,),
+        ).fetchone()
+        relations = connection.execute(
+            "SELECT brain_item_relations.*, "
+            "CASE WHEN source_item_id = ? THEN target_item_id ELSE source_item_id END AS related_item_id, "
+            "brain_items.title AS related_item_title "
+            "FROM brain_item_relations JOIN brain_items "
+            "ON brain_items.id = CASE WHEN source_item_id = ? THEN target_item_id ELSE source_item_id END "
+            "WHERE source_item_id = ? OR target_item_id = ? ORDER BY updated_at DESC",
+            (item_id, item_id, item_id, item_id),
+        ).fetchall()
+    return {
+        "summary": capture["analysis"] if capture else None,
+        "captured_at": capture["captured_at"] if capture else None,
+        "relations": [dict(relation) for relation in relations],
+    }
+
+
+def list_capture_timeline(limit: int = 20) -> list[dict[str, object]]:
+    with _brain_database() as connection:
         captures = connection.execute(
             "SELECT * FROM brain_captures ORDER BY captured_at DESC, id DESC LIMIT ?", (limit,)
         ).fetchall()
@@ -389,7 +445,7 @@ def brain_timeline(limit: int = 20) -> list[dict[str, object]]:
             **dict(capture),
             "items": [
                 {"id": item.id, "title": item.title, "summary": item.summary}
-                for item in items_for_capture(capture["id"])
+                for item in list_capture_items(capture["id"])
             ],
         }
         for capture in captures
@@ -397,22 +453,19 @@ def brain_timeline(limit: int = 20) -> list[dict[str, object]]:
 
 
 def get_item(item_id: int) -> BrainItem | None:
-    initialize_schema()
-    with database_connection() as connection:
+    with _brain_database() as connection:
         row = connection.execute("SELECT * FROM brain_items WHERE id = ?", (item_id,)).fetchone()
-    return item_from_row(row) if row else None
+    return brain_item_from_row(row) if row else None
 
 
 def list_recent_items(limit: int = 20) -> list[BrainItem]:
-    initialize_schema()
-    with database_connection() as connection:
+    with _brain_database() as connection:
         rows = connection.execute("SELECT * FROM brain_items WHERE status = 'active' ORDER BY created_at DESC, id DESC LIMIT ?", (limit,)).fetchall()
-    return [item_from_row(row) for row in rows]
+    return [brain_item_from_row(row) for row in rows]
 
 
-def brain_graph_data() -> dict[str, list[dict[str, object]]]:
-    initialize_schema()
-    with database_connection() as connection:
+def get_brain_graph() -> dict[str, list[dict[str, object]]]:
+    with _brain_database() as connection:
         rows = connection.execute(
             "SELECT id, title, summary, item_type, tags_json, source_url "
             "FROM brain_items WHERE status = 'active' ORDER BY created_at, id"
@@ -444,8 +497,7 @@ def brain_graph_data() -> dict[str, list[dict[str, object]]]:
 def search_items(
     query: str, limit: int = 20, item_type: str | None = None
 ) -> list[BrainItem]:
-    initialize_schema()
-    with database_connection() as connection:
+    with _brain_database() as connection:
         terms = " OR ".join(f'"{term}"' for term in query.split() if term)
         rows = connection.execute(
             "SELECT brain_items.* FROM brain_items_fts "
@@ -454,12 +506,11 @@ def search_items(
             "AND (? IS NULL OR brain_items.item_type = ?) ORDER BY rank LIMIT ?",
             (terms, item_type, item_type, limit),
         ).fetchall() if terms else []
-    return [item_from_row(row) for row in rows]
+    return [brain_item_from_row(row) for row in rows]
 
 
 def auto_capture_enabled() -> bool:
-    initialize_schema()
-    with database_connection() as connection:
+    with _brain_database() as connection:
         row = connection.execute(
             "SELECT auto_capture_enabled FROM brain_settings WHERE id = 1"
         ).fetchone()
@@ -467,8 +518,7 @@ def auto_capture_enabled() -> bool:
 
 
 def set_auto_capture_enabled(enabled: bool) -> None:
-    initialize_schema()
-    with database_connection() as connection:
+    with _brain_database() as connection:
         connection.execute(
             "UPDATE brain_settings SET auto_capture_enabled = ?, updated_at = ? WHERE id = 1",
             (int(enabled), format_timestamp(utc_now())),
@@ -476,8 +526,7 @@ def set_auto_capture_enabled(enabled: bool) -> None:
 
 
 def archive_item(item_id: int) -> bool:
-    initialize_schema()
-    with database_connection() as connection:
+    with _brain_database() as connection:
         cursor = connection.execute(
             "UPDATE brain_items SET status = 'archived', updated_at = ? "
             "WHERE id = ? AND status = 'active'",
@@ -486,16 +535,14 @@ def archive_item(item_id: int) -> bool:
     return cursor.rowcount == 1
 
 
-def list_deliveries_for_item(item_id: int) -> list[ReminderDelivery]:
-    initialize_schema()
-    with database_connection() as connection:
+def list_item_deliveries(item_id: int) -> list[ReminderDelivery]:
+    with _brain_database() as connection:
         rows = connection.execute("SELECT reminder_deliveries.*, brain_items.title FROM reminder_deliveries JOIN brain_items ON brain_items.id = reminder_deliveries.brain_item_id WHERE brain_item_id = ? ORDER BY reminder_deliveries.id", (item_id,)).fetchall()
     return [ReminderDelivery(row["id"], row["brain_item_id"], row["title"], parse_timestamp(row["scheduled_at"]), row["attempt_count"], row["lease_token"] or "") for row in rows]
 
 
 def export_brain_data() -> dict[str, object]:
-    initialize_schema()
-    with database_connection() as connection:
+    with _brain_database() as connection:
         return {
             "brain_settings": dict(
                 connection.execute("SELECT * FROM brain_settings WHERE id = 1").fetchone()
@@ -509,16 +556,14 @@ def export_brain_data() -> dict[str, object]:
 
 
 def delete_all_brain_data() -> None:
-    initialize_schema()
-    with database_connection() as connection:
+    with _brain_database() as connection:
         connection.execute("DELETE FROM reminder_deliveries")
         connection.execute("DELETE FROM brain_items")
         connection.execute("DELETE FROM brain_settings")
 
 
 def delete_item(item_id: int) -> bool:
-    initialize_schema()
-    with database_connection() as connection:
+    with _brain_database() as connection:
         connection.execute("DELETE FROM reminder_deliveries WHERE brain_item_id = ?", (item_id,))
         cursor = connection.execute("DELETE FROM brain_items WHERE id = ?", (item_id,))
     return cursor.rowcount == 1

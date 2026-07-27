@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -18,17 +19,25 @@ from src import config
 from src.config import ALLOWED_USER_ID, BOT_TOKEN
 from src.handlers.chat import chat, photo_chat, voice_chat
 from src.handlers.commands import (
+    BRAIN_BUTTON_TEXT,
+    CANCEL_DELETE_BUTTON_TEXT,
+    CONFIRM_DELETE_BUTTON_TEXT,
+    DELETE_DATA_BUTTON_TEXT,
+    EXPORT_DATA_BUTTON_TEXT,
+    HELP_BUTTON_TEXT,
+    PAUSE_BRAIN_BUTTON_TEXT,
+    RESUME_BRAIN_BUTTON_TEXT,
     TASKS_BUTTON_TEXT,
     complete_task_callback,
-    brain_archive,
-    brain_delete,
     brain_pause,
     brain_resume,
-    delete_data,
-    done,
+    cancel_data_deletion,
+    confirm_data_deletion,
     export_data,
     list_brain,
     list_tasks,
+    request_data_deletion,
+    show_help,
     start,
 )
 from src.core.errors import try_async
@@ -60,18 +69,21 @@ def create_telegram_application() -> Application:
         .build()
     )
     application.add_handler(CommandHandler("start", allowed_only(start)))
-    application.add_handler(CommandHandler("tasks", allowed_only(list_tasks)))
-    application.add_handler(CommandHandler("done", allowed_only(done)))
-    application.add_handler(CommandHandler("brain", allowed_only(list_brain)))
-    application.add_handler(CommandHandler("brain_pause", allowed_only(brain_pause)))
-    application.add_handler(CommandHandler("brain_resume", allowed_only(brain_resume)))
-    application.add_handler(CommandHandler("brain_archive", allowed_only(brain_archive)))
-    application.add_handler(CommandHandler("brain_delete", allowed_only(brain_delete)))
-    application.add_handler(CommandHandler("export_data", allowed_only(export_data)))
-    application.add_handler(CommandHandler("delete_data", allowed_only(delete_data)))
-    application.add_handler(
-        MessageHandler(filters.Regex(f"^{TASKS_BUTTON_TEXT}$"), allowed_only(list_tasks))
-    )
+    keyboard_handlers = {
+        TASKS_BUTTON_TEXT: list_tasks,
+        BRAIN_BUTTON_TEXT: list_brain,
+        PAUSE_BRAIN_BUTTON_TEXT: brain_pause,
+        RESUME_BRAIN_BUTTON_TEXT: brain_resume,
+        EXPORT_DATA_BUTTON_TEXT: export_data,
+        DELETE_DATA_BUTTON_TEXT: request_data_deletion,
+        CONFIRM_DELETE_BUTTON_TEXT: confirm_data_deletion,
+        CANCEL_DELETE_BUTTON_TEXT: cancel_data_deletion,
+        HELP_BUTTON_TEXT: show_help,
+    }
+    for button_text, handler in keyboard_handlers.items():
+        application.add_handler(
+            MessageHandler(filters.Regex(f"^{re.escape(button_text)}$"), allowed_only(handler))
+        )
     application.add_handler(
         CallbackQueryHandler(allowed_only(complete_task_callback), pattern=r"^done:")
     )

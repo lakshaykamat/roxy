@@ -11,7 +11,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 from src import config
 from src.dashboard import service as dashboard
 from src.conversations import history
-from src.knowledge import brain
+from src.knowledge import brain_store
 from src.reminders import repository as tasks
 
 
@@ -28,7 +28,7 @@ class DashboardTests(unittest.TestCase):
 
     def test_snapshot_uses_unified_data_without_service_heartbeats(self):
         history.add("user", "private chat body")
-        brain.create_item(
+        brain_store.save_item(
             "private memory", "Private memory", "private memory", "preference", [], "text", "explicit"
         )
         tasks.create_task("Pay rent", "2099-01-01T09:00:00+00:00")

@@ -123,7 +123,7 @@ def _bookmark(url: str) -> CapturedSource:
     return CapturedSource(url, None, None, None, "bookmark")
 
 
-async def capture_public_url(url: str) -> CapturedSource:
+async def read_public_link(url: str) -> CapturedSource:
     async def capture() -> CapturedSource:
         current_url = normalize_public_url(url)
         for _ in range(5):

@@ -3,23 +3,51 @@ import json
 import logging
 import re
 
-from telegram import ReplyKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from zoneinfo import ZoneInfo
 
-from src.knowledge import brain
-from src.knowledge import service as privacy
+from src.knowledge import brain_store
+from src.knowledge import data_management as privacy
 from src.reminders import repository as tasks
 from src.core.errors import log_async_error, try_catch
 
 logger = logging.getLogger(__name__)
 
 TASKS_BUTTON_TEXT = "📅 My tasks"
+BRAIN_BUTTON_TEXT = "🧠 My brain"
+PAUSE_BRAIN_BUTTON_TEXT = "⏸ Pause brain"
+RESUME_BRAIN_BUTTON_TEXT = "▶️ Resume brain"
+EXPORT_DATA_BUTTON_TEXT = "📦 Export my data"
+DELETE_DATA_BUTTON_TEXT = "🗑 Delete my data"
+HELP_BUTTON_TEXT = "ℹ️ Help"
+CONFIRM_DELETE_BUTTON_TEXT = "🗑 Delete permanently"
+CANCEL_DELETE_BUTTON_TEXT = "Cancel"
 COMPLETION_CALLBACK_PATTERN = re.compile(r"done:(\d+)")
 
 
-def task_list_response() -> str:
-    active_tasks = tasks.list_active_tasks()
+def main_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [
+            [TASKS_BUTTON_TEXT, BRAIN_BUTTON_TEXT],
+            [PAUSE_BRAIN_BUTTON_TEXT, RESUME_BRAIN_BUTTON_TEXT],
+            [EXPORT_DATA_BUTTON_TEXT, DELETE_DATA_BUTTON_TEXT],
+            [HELP_BUTTON_TEXT],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def delete_confirmation_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [[CONFIRM_DELETE_BUTTON_TEXT, CANCEL_DELETE_BUTTON_TEXT]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def task_list_response(active_tasks: list[object]) -> str:
     if not active_tasks:
         return "You don't have any active tasks."
 
@@ -30,21 +58,31 @@ def task_list_response() -> str:
         lines.append(
             f"{task.id}. {task.title} — {due_at:%d %b %Y, %I:%M %p} {task.timezone}{recurrence}"
         )
-    lines.append("\nTo complete a task, use /done <task id>.")
+    lines.append("\nUse the Done buttons below to complete tasks.")
     return "\n".join(lines)
+
+
+def task_list_keyboard(active_tasks: list[object]) -> InlineKeyboardMarkup | None:
+    if not active_tasks:
+        return None
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(f"Done: {task.title}", callback_data=f"done:{task.id}")]
+         for task in active_tasks]
+    )
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Hey! I'm Roxy 👋 What's on your mind?",
-        reply_markup=ReplyKeyboardMarkup(
-            [[TASKS_BUTTON_TEXT]], resize_keyboard=True, is_persistent=True
-        ),
+        reply_markup=main_keyboard(),
     )
 
 
 async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(task_list_response())
+    active_tasks = tasks.list_active_tasks()
+    await update.message.reply_text(
+        task_list_response(active_tasks), reply_markup=task_list_keyboard(active_tasks)
+    )
 
 
 def completion_task_id(callback_data: object) -> int | None:
@@ -87,8 +125,15 @@ async def complete_task_callback(
         )
         return
 
-    response = try_catch(task_list_response, handle_error=log_task_list_error)
-    if response is None:
+    task_view = try_catch(
+        lambda: (
+            (active_tasks := tasks.list_active_tasks()),
+            task_list_response(active_tasks),
+            task_list_keyboard(active_tasks),
+        ),
+        handle_error=log_task_list_error,
+    )
+    if task_view is None:
         refresh_failure_message = (
             "Task updated, but I couldn't refresh the task list."
             if completed
@@ -113,26 +158,14 @@ async def complete_task_callback(
     )
 
     await log_async_error(
-        lambda: callback_query.edit_message_text(response),
+        lambda: callback_query.edit_message_text(task_view[1], reply_markup=task_view[2]),
         logger=logger,
         error_message="Unable to refresh task list after completion",
     )
 
 
-async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args or len(context.args) != 1 or not context.args[0].isdigit():
-        await update.message.reply_text("Use /done <task id>, for example /done 3.")
-        return
-
-    task_id = int(context.args[0])
-    if tasks.complete_task(task_id):
-        await update.message.reply_text(f"Task {task_id} marked complete.")
-    else:
-        await update.message.reply_text(f"I couldn't find an active task with ID {task_id}.")
-
-
 def brain_list_response() -> str:
-    items = brain.list_recent_items()
+    items = brain_store.list_recent_items()
     if not items:
         return "Your brain is empty."
     lines = ["Your newest brain items:"]
@@ -143,24 +176,13 @@ def brain_list_response() -> str:
 
 
 def brain_pause_response() -> str:
-    brain.set_auto_capture_enabled(False)
+    brain_store.set_auto_capture_enabled(False)
     return "Automatic brain capture is paused."
 
 
 def brain_resume_response() -> str:
-    brain.set_auto_capture_enabled(True)
+    brain_store.set_auto_capture_enabled(True)
     return "Automatic brain capture is on."
-
-
-def brain_item_response(arguments: list[str], *, delete: bool = False) -> str:
-    if len(arguments) != 1 or not arguments[0].isdigit() or int(arguments[0]) <= 0:
-        action = "delete" if delete else "archive"
-        return f"Use /brain_{action} <brain item id>, for example /brain_{action} 3."
-    item_id = int(arguments[0])
-    changed = brain.delete_item(item_id) if delete else brain.archive_item(item_id)
-    if changed:
-        return "Brain item deleted." if delete else "Brain item archived."
-    return "I couldn't find an active brain item with that ID."
 
 
 async def list_brain(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -175,16 +197,8 @@ async def brain_resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(brain_resume_response())
 
 
-async def brain_archive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(brain_item_response(context.args))
-
-
-async def brain_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(brain_item_response(context.args, delete=True))
-
-
 async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    payload = json.dumps(privacy.export_local_data(), ensure_ascii=False, indent=2)
+    payload = json.dumps(privacy.export_user_data(), ensure_ascii=False, indent=2)
     document = io.BytesIO(payload.encode("utf-8"))
     document.name = "roxy-data-export.json"
     await context.bot.send_document(
@@ -194,12 +208,34 @@ async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 
-def delete_data_response(arguments: list[str]) -> str:
-    if arguments != ["CONFIRM"]:
-        return "This deletes Roxy's local messages, brain items, and reminder deliveries. Use /delete_data CONFIRM to continue."
-    privacy.delete_local_data()
-    return "Roxy's local messages, brain items, and reminder deliveries have been deleted."
+async def request_data_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data["confirming_data_deletion"] = True
+    await update.message.reply_text(
+        "This permanently deletes Roxy's local messages, brain items, and reminder deliveries.",
+        reply_markup=delete_confirmation_keyboard(),
+    )
 
 
-async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(delete_data_response(context.args))
+async def confirm_data_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.user_data.pop("confirming_data_deletion", False):
+        await update.message.reply_text(
+            "Choose Delete my data first.", reply_markup=main_keyboard()
+        )
+        return
+    privacy.delete_user_data()
+    await update.message.reply_text(
+        "Roxy's local messages, brain items, and reminder deliveries have been deleted.",
+        reply_markup=main_keyboard(),
+    )
+
+
+async def cancel_data_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop("confirming_data_deletion", None)
+    await update.message.reply_text("Deletion cancelled.", reply_markup=main_keyboard())
+
+
+async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "Use the keyboard to view tasks and saved brain items, control automatic capture, "
+        "export your data, or permanently delete local data."
+    )

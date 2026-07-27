@@ -104,27 +104,26 @@ Run the test suite with:
 uv run python -m unittest discover -s tests -v
 ```
 
-## Commands
+## Keyboard actions
 
-| Command | Description |
+Use `/start` once to show Roxy's persistent keyboard. After that, use its buttons:
+
+| Button | Description |
 | --- | --- |
-| `/start` | Starts a conversation with Roxy. |
-| `/tasks` | Lists active reminders. |
-| `/done <id>` | Marks an active reminder complete. |
-| `/brain` | Lists the 20 newest active brain items. |
-| `/brain_pause` | Pauses automatic brain capture. |
-| `/brain_resume` | Resumes automatic brain capture. |
-| `/brain_archive <id>` | Archives one brain item. |
-| `/brain_delete <id>` | Permanently deletes one brain item. |
-| `/export_data` | Sends a JSON export of local messages, brain items, settings, and reminder deliveries. |
-| `/delete_data CONFIRM` | Permanently deletes Roxy's local messages, brain items, and reminder deliveries. |
+| 📅 My tasks | Lists active reminders and shows a Done button for each one. |
+| 🧠 My brain | Lists the 20 newest active brain items. |
+| ⏸ Pause brain | Pauses automatic brain capture. |
+| ▶️ Resume brain | Resumes automatic brain capture. |
+| 📦 Export my data | Sends a JSON export of local messages, brain items, settings, and reminder deliveries. |
+| 🗑 Delete my data | Opens a keyboard confirmation before permanently deleting local data. |
+| ℹ️ Help | Explains the available keyboard actions. |
 
 ## Privacy and service health
 
 Roxy automatically captures durable ideas, facts, preferences, people, projects,
 goals, decisions, references, and reflections. It does not capture casual chat,
 sensitive information, expenses, or content marked “don't save.” Use
-`/brain_pause` to pause automatic capture; direct save requests still work.
+the Pause brain button to pause automatic capture; direct save requests still work.
 Tasks are brain items, while their notification attempts are stored separately.
 `/ready` returns `503` when the bot database is unavailable; `/health` is
 liveness only.

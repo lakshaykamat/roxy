@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from src.knowledge.link_capture import CapturedSource
+from src.knowledge.public_link_reader import CapturedSource
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,16 @@ class CapturePlan:
     analysis: str
     rationale: str
     items: list[CaptureItem]
+    relations: list["CaptureRelation"] = ()
+
+
+@dataclass(frozen=True)
+class CaptureRelation:
+    source_item_index: int
+    target_item_id: int
+    relation_type: str
+    explanation: str
+    confidence: float
 
 
 @dataclass(frozen=True)
@@ -31,7 +41,7 @@ class Capture:
     captured_at: str
 
 
-def plan_capture(request: str, sources: list[CapturedSource]) -> CapturePlan:
+def build_capture_plan(request: str, sources: list[CapturedSource]) -> CapturePlan:
     clean_request = request.strip()
     items: list[CaptureItem] = []
     for source in sources:

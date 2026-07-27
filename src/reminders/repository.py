@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from src import config
-from src.knowledge import brain
+from src.knowledge import brain_store
 from src.core.errors import try_catch
 from src.conversations.history import database_connection as history_database_connection
 
@@ -24,20 +24,20 @@ class ScheduledTask:
     completed_at: datetime | None
 
 
-Reminder = brain.ReminderDelivery
-utc_now = brain.utc_now
-format_timestamp = brain.format_timestamp
-parse_timestamp = brain.parse_timestamp
+Reminder = brain_store.ReminderDelivery
+utc_now = brain_store.utc_now
+format_timestamp = brain_store.format_timestamp
+parse_timestamp = brain_store.parse_timestamp
 
 
-def task_from_item(item: brain.BrainItem) -> ScheduledTask:
+def task_from_item(item: brain_store.BrainItem) -> ScheduledTask:
     if item.due_at is None or item.timezone is None:
         raise ValueError("Task brain items require a due time and timezone.")
     return ScheduledTask(item.id, item.title, item.timezone, item.status, item.recurrence_rule, item.due_at, item.created_at, item.completed_at)
 
 
 def database_connection():
-    brain.initialize_schema()
+    brain_store.initialize_schema()
     return history_database_connection()
 
 
@@ -99,7 +99,7 @@ def create_task(
     due_time, timezone_name, recurrence_rule = validate_schedule(
         due_at, recurrence, task_timezone
     )
-    task = brain.create_item(title, title, title, "task", [], "command", "explicit", due_at=due_time, timezone_name=timezone_name, recurrence_rule=recurrence_rule)
+    task = brain_store.save_item(title, title, title, "task", [], "command", "explicit", due_at=due_time, timezone_name=timezone_name, recurrence_rule=recurrence_rule)
     now = format_timestamp(utc_now())
     with database_connection() as connection:
         _schedule_delivery(connection, task.id, due_time, now)
@@ -107,10 +107,10 @@ def create_task(
 
 
 def list_active_tasks() -> list[ScheduledTask]:
-    brain.initialize_schema()
+    brain_store.initialize_schema()
     with database_connection() as connection:
         rows = connection.execute("SELECT * FROM brain_items WHERE item_type = 'task' AND status = 'active' ORDER BY due_at, id").fetchall()
-    return [task_from_item(brain.item_from_row(row)) for row in rows]
+    return [task_from_item(brain_store.brain_item_from_row(row)) for row in rows]
 
 def complete_task(task_id: int) -> bool:
     now = format_timestamp(utc_now())
@@ -160,7 +160,7 @@ def update_task(task_id: int, *, title: str | None = None, due_at: str | None = 
             _cancel_pending_deliveries(connection, task_id, now)
             _schedule_delivery(connection, task_id, new_due_at, now)
         updated = connection.execute("SELECT * FROM brain_items WHERE id = ?", (task_id,)).fetchone()
-    return task_from_item(brain.item_from_row(updated))
+    return task_from_item(brain_store.brain_item_from_row(updated))
 
 
 def claim_due_reminder(now: datetime | None = None) -> Reminder | None:

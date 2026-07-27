@@ -31,7 +31,7 @@ class AppTests(unittest.TestCase):
         builder.read_timeout.assert_called_once_with(20)
         builder.write_timeout.assert_called_once_with(20)
         builder.pool_timeout.assert_called_once_with(5)
-        self.assertEqual(application.add_handler.call_count, 15)
+        self.assertEqual(application.add_handler.call_count, 14)
         voice_handler = next(
             call
             for call in message_handler.call_args_list

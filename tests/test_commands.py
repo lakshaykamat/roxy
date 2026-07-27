@@ -12,7 +12,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from src.handlers import commands
 from src import config
-from src.knowledge import brain
+from src.knowledge import brain_store
 
 
 class CommandTests(unittest.TestCase):
@@ -43,10 +43,10 @@ class CommandTests(unittest.TestCase):
             asyncio.run(commands.list_tasks(update, MagicMock()))
 
         update.message.reply_text.assert_awaited_once_with(
-            "You don't have any active tasks."
+            "You don't have any active tasks.", reply_markup=None
         )
 
-    def test_start_command_sends_persistent_tasks_button(self):
+    def test_start_command_sends_all_persistent_buttons(self):
         update = MagicMock()
         update.message.reply_text = AsyncMock()
 
@@ -55,10 +55,22 @@ class CommandTests(unittest.TestCase):
         asyncio.run(commands.start(update, MagicMock()))
 
         reply_markup = update.message.reply_text.await_args.kwargs["reply_markup"]
-        self.assertEqual(reply_markup.keyboard[0][0].text, commands.TASKS_BUTTON_TEXT)
+        button_texts = [button.text for row in reply_markup.keyboard for button in row]
+        self.assertEqual(
+            button_texts,
+            [
+                commands.TASKS_BUTTON_TEXT,
+                commands.BRAIN_BUTTON_TEXT,
+                commands.PAUSE_BRAIN_BUTTON_TEXT,
+                commands.RESUME_BRAIN_BUTTON_TEXT,
+                commands.EXPORT_DATA_BUTTON_TEXT,
+                commands.DELETE_DATA_BUTTON_TEXT,
+                commands.HELP_BUTTON_TEXT,
+            ],
+        )
         self.assertTrue(reply_markup.is_persistent)
 
-    def test_tasks_command_shows_numbered_list_without_completion_buttons(self):
+    def test_tasks_button_shows_numbered_list_with_completion_buttons(self):
         task = SimpleNamespace(
             id=3,
             title="Pay rent",
@@ -76,8 +88,9 @@ class CommandTests(unittest.TestCase):
         text = update.message.reply_text.await_args.args[0]
         self.assertIn("3. Pay rent", text)
         self.assertIn("(monthly:21)", text)
-        self.assertIn("/done <task id>", text)
-        self.assertEqual(update.message.reply_text.await_args.kwargs, {})
+        self.assertIn("Use the Done buttons below", text)
+        reply_markup = update.message.reply_text.await_args.kwargs["reply_markup"]
+        self.assertEqual(reply_markup.inline_keyboard[0][0].callback_data, "done:3")
 
     def test_completion_callback_completes_task_and_refreshes_list(self):
         update = MagicMock()
@@ -95,7 +108,7 @@ class CommandTests(unittest.TestCase):
         complete_task.assert_called_once_with(3)
         update.callback_query.answer.assert_awaited_once_with("Task marked complete.")
         update.callback_query.edit_message_text.assert_awaited_once_with(
-            "You don't have any active tasks."
+            "You don't have any active tasks.", reply_markup=None
         )
 
     def test_completion_callback_rejects_malformed_payload(self):
@@ -146,37 +159,47 @@ class CommandTests(unittest.TestCase):
             "This task is no longer active."
         )
         update.callback_query.edit_message_text.assert_awaited_once_with(
-            "You don't have any active tasks."
-        )
-
-    def test_done_command_rejects_invalid_id(self):
-        update = MagicMock()
-        update.message.reply_text = AsyncMock()
-        context = MagicMock(args=["bad"])
-
-        import asyncio
-
-        asyncio.run(commands.done(update, context))
-
-        update.message.reply_text.assert_awaited_once_with(
-            "Use /done <task id>, for example /done 3."
+            "You don't have any active tasks.", reply_markup=None
         )
 
     def test_brain_pause_disables_capture(self):
         self.assertEqual(commands.brain_pause_response(), "Automatic brain capture is paused.")
-        self.assertFalse(brain.auto_capture_enabled())
+        self.assertFalse(brain_store.auto_capture_enabled())
         self.assertEqual(commands.brain_resume_response(), "Automatic brain capture is on.")
-        self.assertTrue(brain.auto_capture_enabled())
+        self.assertTrue(brain_store.auto_capture_enabled())
 
-    def test_brain_commands_list_archive_and_delete_items(self):
-        item = brain.create_item("Focus afternoons", "Focus block", "Keep afternoons clear", "goal", ["focus"], "text", "explicit")
+    def test_brain_button_lists_items(self):
+        item = brain_store.save_item("Focus afternoons", "Focus block", "Keep afternoons clear", "goal", ["focus"], "text", "explicit")
 
         self.assertIn("Focus block [goal]", commands.brain_list_response())
-        self.assertEqual(commands.brain_item_response([str(item.id)]), "Brain item archived.")
-        self.assertEqual(commands.brain_item_response([str(item.id)], delete=True), "Brain item deleted.")
 
-    def test_brain_item_command_rejects_invalid_id(self):
+    def test_delete_button_requires_keyboard_confirmation(self):
+        update = MagicMock()
+        update.message.reply_text = AsyncMock()
+        context = MagicMock(user_data={})
+
+        import asyncio
+
+        asyncio.run(commands.request_data_deletion(update, context))
+
+        reply_markup = update.message.reply_text.await_args.kwargs["reply_markup"]
         self.assertEqual(
-            commands.brain_item_response(["zero"]),
-            "Use /brain_archive <brain item id>, for example /brain_archive 3.",
+            [button.text for button in reply_markup.keyboard[0]],
+            [commands.CONFIRM_DELETE_BUTTON_TEXT, commands.CANCEL_DELETE_BUTTON_TEXT],
+        )
+        self.assertTrue(context.user_data["confirming_data_deletion"])
+
+    def test_delete_confirmation_requires_a_previous_request(self):
+        update = MagicMock()
+        update.message.reply_text = AsyncMock()
+        context = MagicMock(user_data={})
+
+        import asyncio
+
+        with patch("src.handlers.commands.privacy.delete_user_data") as delete_user_data:
+            asyncio.run(commands.confirm_data_deletion(update, context))
+
+        delete_user_data.assert_not_called()
+        update.message.reply_text.assert_awaited_once_with(
+            "Choose Delete my data first.", reply_markup=commands.main_keyboard()
         )

@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -18,7 +19,7 @@ from src.agent.tool_registry import (
 from src.core.debounce import DebounceCoordinator, PendingMessage
 from src.core.errors import log_async_error, retry_async, try_async
 from src.conversations import history
-from src.knowledge import brain
+from src.knowledge import brain_store
 from src.core.llm import ask_llm, classify_tool_intent
 from src.core.transcription import transcribe_voice
 
@@ -37,7 +38,7 @@ def build_photo_message(
     if caption:
         content.append({"type": "text", "text": caption})
     content.append(image_part)
-    context = brain_context(caption)
+    context = build_brain_context(caption)
     messages: list[object] = [
         {"role": "system", "content": SYSTEM_PROMPT},
     ]
@@ -75,12 +76,8 @@ async def photo_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         logger.info("Photo response sent for chat %s", chat_id)
 
     async def send_fallback(_: BaseException) -> None:
-        logger.exception("Unable to process photo for chat %s", chat_id)
-        await log_async_error(
-            lambda: context.bot.send_message(chat_id, FALLBACK_REPLY),
-            logger=logger,
-            error_message="Unable to send fallback reply for photo in chat %s",
-            error_args=(chat_id,),
+        await send_fallback_reply(
+            context.bot.send_message, chat_id, "process photo",
         )
 
     await try_async(process_photo, handle_error=send_fallback)
@@ -125,12 +122,8 @@ async def voice_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await submit_chat_text(update, context, transcript)
 
     async def send_fallback(_: BaseException) -> None:
-        logger.exception("Unable to process voice message for chat %s", chat_id)
-        await log_async_error(
-            lambda: context.bot.send_message(chat_id, FALLBACK_REPLY),
-            logger=logger,
-            error_message="Unable to send fallback reply for voice message in chat %s",
-            error_args=(chat_id,),
+        await send_fallback_reply(
+            context.bot.send_message, chat_id, "process voice message",
         )
 
     await try_async(process_voice, handle_error=send_fallback)
@@ -149,23 +142,9 @@ async def process_burst(chat_id: int, pending_messages: list[PendingMessage]) ->
             capture_key=f"telegram:{chat_id}:{pending_messages[0].id}:{pending_messages[-1].id}",
         )
 
-    async def send_with_retry(text: str) -> object:
-        return await retry_async(
-            lambda: send_reply(chat_id, text),
-            attempts=TELEGRAM_SEND_ATTEMPTS,
-            retry_delay_seconds=TELEGRAM_SEND_RETRY_DELAY_SECONDS,
-            logger=logger,
-            error_message=f"Unable to send Telegram reply for chat {chat_id}",
-            exception_types=NetworkError,
-        )
-
     async def send_fallback(_: BaseException) -> None:
-        logger.exception("Unable to process chat burst for chat %s", chat_id)
-        await log_async_error(
-            lambda: send_with_retry(FALLBACK_REPLY),
-            logger=logger,
-            error_message="Unable to send fallback reply for chat %s",
-            error_args=(chat_id,),
+        await send_fallback_reply(
+            send_reply, chat_id, "process chat burst", retry=True,
         )
 
     reply = await try_async(create_reply, handle_error=send_fallback)
@@ -173,7 +152,7 @@ async def process_burst(chat_id: int, pending_messages: list[PendingMessage]) ->
         return
 
     delivered = await log_async_error(
-        lambda: send_with_retry(reply),
+        lambda: send_reply_with_retry(send_reply, chat_id, reply),
         logger=logger,
         error_message="Unable to deliver chat response for chat %s",
         error_args=(chat_id,),
@@ -185,12 +164,45 @@ async def process_burst(chat_id: int, pending_messages: list[PendingMessage]) ->
     logger.info("Chat response sent for chat %s", chat_id)
 
 
+async def send_fallback_reply(
+    send_reply: Callable[[int, str], Awaitable[object]], chat_id: int,
+    action: str, *, retry: bool = False,
+) -> None:
+    logger.exception("Unable to %s for chat %s", action, chat_id)
+    send = send_reply_with_retry if retry else _send_reply
+    await log_async_error(
+        lambda: send(send_reply, chat_id, FALLBACK_REPLY),
+        logger=logger,
+        error_message="Unable to send fallback reply for chat %s",
+        error_args=(chat_id,),
+    )
+
+
+async def _send_reply(
+    send_reply: Callable[[int, str], Awaitable[object]], chat_id: int, text: str,
+) -> object:
+    return await send_reply(chat_id, text)
+
+
+async def send_reply_with_retry(
+    send_reply: Callable[[int, str], Awaitable[object]], chat_id: int, text: str,
+) -> object:
+    return await retry_async(
+        lambda: send_reply(chat_id, text),
+        attempts=TELEGRAM_SEND_ATTEMPTS,
+        retry_delay_seconds=TELEGRAM_SEND_RETRY_DELAY_SECONDS,
+        logger=logger,
+        error_message=f"Unable to send Telegram reply for chat {chat_id}",
+        exception_types=NetworkError,
+    )
+
+
 def build_burst_messages(pending_messages: list[PendingMessage]) -> list[object]:
     current_time = datetime.now(ZoneInfo(config.TASK_TIMEZONE)).isoformat()
     user_message = "\n".join(message.text for message in pending_messages)
     user_message += f"\n\nCurrent time in {config.TASK_TIMEZONE}: {current_time}"
 
-    context = brain_context(user_message)
+    context = build_brain_context(user_message)
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         *([{"role": "system", "content": context}] if context else []),
@@ -289,9 +301,25 @@ def append_saved_item_notice(reply: str, saved_titles: list[str]) -> str:
     return f"{reply}\n\nSaved to your brain: {', '.join(dict.fromkeys(saved_titles))}."
 
 
-def brain_context(text: str) -> str:
-    items = brain.search_items(text, 8)
+def build_brain_context(text: str) -> str:
+    items = brain_store.search_items(text, 8)
     if not items:
         return ""
-    lines = (f"- [{item.id}] {item.content}" for item in items)
+    lines = []
+    for item in items:
+        context = brain_store.get_item_capture_context(item.id)
+        details = [f"[{item.id}] {item.content}"]
+        if item.source_url:
+            details.append(f"Source: {item.source_url}")
+        captured_at = context.get("captured_at") or item.created_at.isoformat()
+        details.append(f"Captured: {captured_at}")
+        if item.source_published_at:
+            details.append(f"Published: {item.source_published_at.isoformat()}")
+        if context["summary"]:
+            details.append(f"Capture summary: {context['summary']}")
+        details.extend(
+            f"{relation['relation_type']}: {relation['explanation']}"
+            for relation in context["relations"]
+        )
+        lines.append("; ".join(details))
     return "Relevant brain items:\n" + "\n".join(lines)
