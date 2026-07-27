@@ -283,6 +283,14 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ask_llm.await_args.kwargs["tools"], chat.TOOL_DEFINITIONS)
         self.assertIsNone(ask_llm.await_args.kwargs["tool_choice"])
 
+    def test_system_prompt_captures_durable_context_from_expense_messages(self):
+        self.assertIn(
+            "A message can require multiple independent tool actions",
+            chat.SYSTEM_PROMPT,
+        )
+        self.assertIn("Assess Brain capture", chat.SYSTEM_PROMPT)
+        self.assertIn("Save sensitive durable facts too", chat.SYSTEM_PROMPT)
+
     async def test_activity_logs_include_full_chat_and_tool_payloads(self):
         tool_call = SimpleNamespace(
             id="call_1",

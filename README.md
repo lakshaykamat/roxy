@@ -150,8 +150,10 @@ Use `/start` once to show Roxy's persistent keyboard. After that, use its button
 
 Roxy automatically captures durable ideas, facts, preferences, people, projects,
 goals, decisions, references, and reflections, including sensitive durable
-facts. It does not capture casual chat, expenses, or content marked “don't save.” Use
-the Pause brain button to pause automatic capture; direct save requests still work.
+facts. It does not capture casual chat, expenses alone, or content marked “don't
+save.” Brain capture is assessed independently when a message also needs another
+action. Use the Pause brain button to pause automatic capture; direct save requests
+still work.
 Tasks are brain items, while their notification attempts are stored separately.
 `/ready` returns `503` when the bot database is unavailable; `/health` is
 liveness only.
