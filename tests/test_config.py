@@ -31,6 +31,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(reloaded.HEARTBEAT_INTERVAL_SECONDS, 30)
         self.assertEqual(reloaded.HEARTBEAT_STALE_AFTER_SECONDS, 90)
 
+    def test_chat_debounce_uses_two_second_default(self):
+        self.assertEqual(config.CHAT_DEBOUNCE_SECONDS, 2)
+
     def test_validate_configuration_requires_dashboard_credentials(self):
         values = {"TELEGRAM_BOT_TOKEN": "token", "OPENAI_API_KEY": "key", "ALLOWED_USER_ID": "1", "DASHBOARD_PASSWORD": "", "DASHBOARD_SESSION_SECRET": ""}
         with patch.dict(os.environ, values, clear=True):

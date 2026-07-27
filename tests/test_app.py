@@ -15,11 +15,22 @@ class AppTests(unittest.TestCase):
     def test_create_telegram_application_registers_handlers(
         self, builder_class, message_handler
     ):
-        application = builder_class.return_value.token.return_value.build.return_value
+        builder = builder_class.return_value
+        builder.token.return_value = builder
+        builder.connect_timeout.return_value = builder
+        builder.read_timeout.return_value = builder
+        builder.write_timeout.return_value = builder
+        builder.pool_timeout.return_value = builder
+        application = builder.build.return_value
 
         result = app.create_telegram_application()
 
         self.assertIs(result, application)
+        builder.token.assert_called_once_with(app.BOT_TOKEN)
+        builder.connect_timeout.assert_called_once_with(20)
+        builder.read_timeout.assert_called_once_with(20)
+        builder.write_timeout.assert_called_once_with(20)
+        builder.pool_timeout.assert_called_once_with(5)
         self.assertEqual(application.add_handler.call_count, 12)
         voice_handler = next(
             call

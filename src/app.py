@@ -48,7 +48,15 @@ def allowed_only(
 
 
 def create_telegram_application() -> Application:
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    application = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .connect_timeout(20)
+        .read_timeout(20)
+        .write_timeout(20)
+        .pool_timeout(5)
+        .build()
+    )
     application.add_handler(CommandHandler("start", allowed_only(start)))
     application.add_handler(CommandHandler("tasks", allowed_only(list_tasks)))
     application.add_handler(CommandHandler("done", allowed_only(done)))
