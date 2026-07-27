@@ -318,21 +318,32 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_choice, "required")
         self.assertEqual(tools, [{"name": "reminder"}])
 
-    async def test_durable_thought_selects_brain_tools(self):
-        messages = [{"role": "user", "content": "Build a freelancer money app"}]
+    async def test_explicit_save_selects_only_capture_tool(self):
+        messages = [{"role": "user", "content": "Save this idea: build a freelancer money app"}]
         with patch(
             "src.handlers.chat.classify_tool_intent",
-            new=AsyncMock(return_value=("brain", True)),
+            new=AsyncMock(return_value=("brain_capture", True)),
         ), patch(
             "src.handlers.chat.tool_definitions_for_intent",
             return_value=[
-                {"type": "function", "function": {"name": "save_brain_item"}},
+                {"type": "function", "function": {"name": "capture_brain_content"}},
             ],
         ):
             tools, choice = await chat.select_agent_tools(messages)
 
         self.assertEqual(choice, "required")
-        self.assertEqual(tools, [{"type": "function", "function": {"name": "save_brain_item"}}])
+        self.assertEqual(tools, [{"type": "function", "function": {"name": "capture_brain_content"}}])
+
+    async def test_web_research_selects_only_search_web(self):
+        messages = [{"role": "user", "content": "Find current SQLite FTS5 guidance"}]
+        web_tools = [{"type": "function", "function": {"name": "search_web"}}]
+        with patch(
+            "src.handlers.chat.classify_tool_intent",
+            new=AsyncMock(return_value=("web_research", True)),
+        ), patch("src.handlers.chat.tool_definitions_for_intent", return_value=web_tools):
+            tools, choice = await chat.select_agent_tools(messages)
+
+        self.assertEqual((tools, choice), (web_tools, "required"))
 
     async def test_brain_management_request_uses_only_lifecycle_tools(self):
         messages = [{"role": "user", "content": "Search my brain for freelancer ideas"}]
@@ -466,6 +477,14 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             reply = await chat.run_agent_loop([{"role": "user", "content": "Build an app"}], capture_key="telegram:7:1:1")
 
         self.assertEqual(reply, "Nice idea.\n\nSaved to your brain: Freelancer app.")
+
+    def test_saved_titles_from_capture_result_returns_each_title(self):
+        titles = chat.saved_titles_from_tool_result(
+            "capture_brain_content",
+            {"capture": {"titles": ["First link", "Second link", 3]}},
+        )
+
+        self.assertEqual(titles, ["First link", "Second link"])
 
     async def test_agent_loop_reports_saved_item_when_round_limit_is_reached(self):
         tool_call = SimpleNamespace(

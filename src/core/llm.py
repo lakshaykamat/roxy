@@ -86,13 +86,16 @@ async def classify_tool_intent(
         examples.append(
             '- "Remind me to call Mum tomorrow at 10" -> reminders, requires_tool=true'
         )
-    if "brain" in intents:
+    if "brain_capture" in intents:
         examples.extend(
             [
-                '- "Build a freelancer money app" -> brain, requires_tool=true',
-                '- "My sister Anya lives in Pune" -> brain, requires_tool=true',
-                '- "Don\'t save this: my API key is abc" -> general, requires_tool=false',
+                '- "Save this idea: build a freelancer money app" -> brain_capture, requires_tool=true',
+                '- "Remember these links for me" -> brain_capture, requires_tool=true',
             ]
+        )
+    if "web_research" in intents:
+        examples.append(
+            '- "Find current SQLite FTS5 guidance" -> web_research, requires_tool=true'
         )
     if "brain_management" in intents:
         examples.append(
@@ -117,11 +120,9 @@ async def classify_tool_intent(
                         "or retrieve facts now. "
                         "A confirmation or answer to a prior expense or reminder clarification can require "
                         "a tool. A user reporting an item and amount is an expense action and requires a tool.\n"
-                        "For brain, use it for durable ideas, facts, preferences, people, projects, goals, "
-                        "decisions, references, and reflections. Use brain_management only to search, archive, "
-                        "or delete an item that has already been saved. Keep greetings, "
-                        "passwords, API keys, account numbers, health details, precise locations, expenses, "
-                        "and content containing 'don\'t save' as general.\n"
+                        "Use brain_capture only for explicit save or remember requests. Use web_research for "
+                        "current facts or web research. Use brain_management only to search, archive, or delete "
+                        "an item that has already been saved. Keep greetings as general.\n"
                         f"Available intents:\n{intent_options}\n"
                         f"Examples:\n{routing_examples}"
                     ),

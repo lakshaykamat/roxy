@@ -15,6 +15,8 @@ TOOL_DEFINITIONS = [
     *brain_tools.DEFINITIONS,
 ]
 TOOL_EXECUTORS: dict[str, ToolExecutor] = {
+    "capture_brain_content": brain_tools.capture_brain_content,
+    "search_web": brain_tools.search_web,
     "schedule_task": create_tool.execute,
     "manage_reminders": manage_tool.execute,
     "search_brain": brain_tools.search_brain,
@@ -39,9 +41,13 @@ TOOL_INTENTS = {
             }
         ),
     },
-    "brain": {
-        "description": "Automatically save a durable idea, fact, preference, person, project, goal, decision, reference, or reflection.",
-        "tool_names": frozenset({"save_brain_item"}),
+    "brain_capture": {
+        "description": "Explicitly save a thought or public links to the user's second brain.",
+        "tool_names": frozenset({"capture_brain_content"}),
+    },
+    "web_research": {
+        "description": "Research current information on the web and return cited results without saving them.",
+        "tool_names": frozenset({"search_web"}),
     },
     "brain_management": {
         "description": "Search, archive, or delete an already saved brain item.",

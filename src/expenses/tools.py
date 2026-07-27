@@ -15,6 +15,7 @@ import json
 import logging
 
 from src import config
+from src.core.errors import try_async
 from src.expenses import models
 from src.expenses.errors import ExpenseTrackerError, ExpenseValidationError
 from src.expenses.models import Expense, ExpenseCategory, match_expenses
@@ -211,13 +212,15 @@ def _parse_arguments(arguments: str) -> dict[str, object]:
 
 
 async def _run(handler) -> dict[str, object]:
-    """Execute a handler, translating known failures into user-safe errors."""
-    try:
-        return await handler()
-    except ExpenseTrackerError as error:
+    return await try_async(handler, handle_error=_tool_error)
+
+
+async def _tool_error(error: BaseException) -> dict[str, object]:
+    if isinstance(error, ExpenseTrackerError):
         return {"ok": False, "error": error.user_message}
-    except (ValueError, TypeError, json.JSONDecodeError) as error:
+    if isinstance(error, (ValueError, TypeError, json.JSONDecodeError)):
         return {"ok": False, "error": str(error) or "I couldn't understand that request."}
+    raise error
 
 
 async def create_expense(arguments: str) -> dict[str, object]:
@@ -322,20 +325,9 @@ async def delete_expense(arguments: str) -> dict[str, object]:
         if target is None:
             return {"ok": False, "error": "I couldn't find that expense to delete."}
 
-        summary = fmt.summarize_expense(target, currency)
         if not confirmed:
-            # Never touch the API before the user confirms; stash the target.
-            state.set_pending_delete(target.id, summary)
-            return {
-                "ok": True,
-                "needs_confirmation": True,
-                "expense": target.to_public(),
-                "formatted": f"I found “{summary}”. Should I permanently delete it?",
-            }
-
-        await get_client().delete_expense(target.id)
-        state.clear()
-        return {"ok": True, "deleted": True, "formatted": fmt.format_deleted(target, currency)}
+            return _delete_confirmation(target, currency)
+        return await _delete_confirmed(target, currency)
 
     return await _run(handler)
 
@@ -364,40 +356,54 @@ def _resolve_id(values: dict[str, object]) -> str | None:
     return None
 
 
+def _delete_confirmation(target: Expense, currency: str) -> dict[str, object]:
+    summary = fmt.summarize_expense(target, currency)
+    state.set_pending_delete(target.id, summary)
+    return {
+        "ok": True,
+        "needs_confirmation": True,
+        "expense": target.to_public(),
+        "formatted": f"I found “{summary}”. Should I permanently delete it?",
+    }
+
+
+async def _delete_confirmed(target: Expense, currency: str) -> dict[str, object]:
+    await get_client().delete_expense(target.id)
+    state.clear()
+    return {"ok": True, "deleted": True, "formatted": fmt.format_deleted(target, currency)}
+
+
 async def _locate(
     values: dict[str, object], *, allow_pending_delete: bool = False
 ) -> tuple[Expense | None, dict[str, object] | None]:
-    """Resolve the target expense for an update/delete.
-
-    Returns ``(expense, None)`` for a single confident target, ``(None, result)``
-    with an ambiguity/candidate payload when the user must choose, or
-    ``(None, None)`` when nothing matched.
-    """
-    currency = _currency(values)
-    client = get_client()
-
-    # 1. An explicit id or a prior selection is unambiguous.
     expense_id = _resolve_id(values)
     if expense_id is not None:
-        return await client.get_expense(expense_id), None
+        return await get_client().get_expense(expense_id), None
 
-    # 2. A pending delete confirmation with no fresh target.
-    has_search = any(values.get(key) for key in ("query", "amount", "category"))
-    if allow_pending_delete and not has_search:
+    if allow_pending_delete and not _has_search_criteria(values):
         pending_id, _summary = state.get_pending_delete()
         if pending_id:
-            return await client.get_expense(pending_id), None
+            return await get_client().get_expense(pending_id), None
 
-    if not has_search:
+    if not _has_search_criteria(values):
         return None, None
 
-    # 3. Search a period and match by title/category/amount.
+    return await _find_matching_expense(values)
+
+
+def _has_search_criteria(values: dict[str, object]) -> bool:
+    return any(values.get(key) for key in ("query", "amount", "category"))
+
+
+async def _find_matching_expense(
+    values: dict[str, object]
+) -> tuple[Expense | None, dict[str, object] | None]:
     params = models.build_list_params(
         month=values.get("month"),
         start_date=values.get("start_date"),
         end_date=values.get("end_date"),
     )
-    result = await client.list_expenses(params)
+    result = await get_client().list_expenses(params)
     matches = match_expenses(
         result["expenses"],
         {
@@ -412,8 +418,15 @@ async def _locate(
     if len(matches) == 1:
         return matches[0], None
 
+    return None, _ambiguous_matches(values, matches)
+
+
+def _ambiguous_matches(
+    values: dict[str, object], matches: list[Expense]
+) -> dict[str, object]:
+    currency = _currency(values)
     _remember(matches, currency)
-    return None, {
+    return {
         "ok": True,
         "ambiguous": True,
         "matches": [

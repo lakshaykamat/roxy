@@ -5,11 +5,45 @@ import sqlite3
 
 from src.core.errors import retry_async, try_async
 from src.knowledge import brain
+from src.knowledge.captures import plan_capture
+from src.knowledge.link_capture import capture_public_url
+from src.knowledge.web_search import search_web
 
 logger = logging.getLogger(__name__)
 ITEM_TYPES = brain.BRAIN_ITEM_TYPES
 
 DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "capture_brain_content",
+            "description": "Immediately save an explicit request and any public links to the user's second brain.",
+            "strict": True,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "request": {"type": "string", "minLength": 1},
+                    "urls": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["request", "urls"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": "Research the live web and return cited results. Never saves results.",
+            "strict": True,
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "minLength": 1}},
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -63,6 +97,8 @@ DEFINITIONS = [
         },
     },
 ]
+
+WEB_SEARCH_DEFINITION = DEFINITIONS[1]
 
 
 def _values(arguments: str) -> dict[str, object]:
@@ -127,6 +163,30 @@ async def save_brain_item(
         return {"ok": False, "error": str(error)}
 
     return await try_async(save, handle_error=failure)
+
+
+async def capture_brain_content(arguments: str) -> dict[str, object]:
+    async def capture() -> dict[str, object]:
+        values = _values(arguments)
+        request = _text(values, "request")
+        raw_urls = values.get("urls")
+        if not isinstance(raw_urls, list) or not all(isinstance(url, str) for url in raw_urls):
+            raise ValueError("URLs must be a list of links.")
+        urls = list(dict.fromkeys(url.strip() for url in raw_urls if url.strip()))
+        sources = await asyncio.gather(*(capture_public_url(url) for url in urls))
+        capture_record = await asyncio.to_thread(brain.create_capture, plan_capture(request, sources))
+        items = await asyncio.to_thread(brain.items_for_capture, capture_record.id)
+        unreadable = [source for source in sources if source.status == "manual_description"]
+        result: dict[str, object] = {
+            "ok": True,
+            "capture": {"id": capture_record.id, "titles": [item.title for item in items]},
+        }
+        if unreadable:
+            result["needs_description"] = True
+            result["question"] = "I couldn't read one of those links. What should I remember about it?"
+        return result
+
+    return await try_async(capture, handle_error=_async_failure)
 
 
 async def search_brain(arguments: str) -> dict[str, object]:

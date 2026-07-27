@@ -233,41 +233,60 @@ async def run_agent_loop(messages: list[object], *, capture_key: str | None = No
             return append_saved_item_notice(reply, saved_titles)
 
         messages.append(message)
-        for tool_call in message.tool_calls:
-            logger.info("Tool call started: %s", tool_call.function.name)
-            result = execute_tool_call(
-                tool_call.function.name,
-                tool_call.function.arguments,
-                capture_key=capture_key,
-            )
-            if inspect.isawaitable(result):
-                result = await result
-            succeeded = result.get("ok") if isinstance(result, dict) else False
-            if succeeded and tool_call.function.name == "save_brain_item":
-                item = result.get("brain_item")
-                if isinstance(item, dict) and isinstance(item.get("title"), str):
-                    saved_titles.append(item["title"])
-            logger.info("Tool call completed: %s ok=%s", tool_call.function.name, succeeded)
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps(result),
-                }
-            )
+        saved_titles.extend(
+            await execute_agent_tool_calls(message.tool_calls, messages, capture_key)
+        )
 
     if saved_titles:
         return (
-            f"Saved to your brain: {saved_titles[-1]}. "
+            f"Saved to your brain: {', '.join(dict.fromkeys(saved_titles))}. "
             "I couldn't finish the remaining request; please try that part again."
         )
     return "I couldn't finish that just now. Please try again in a moment."
 
 
+async def execute_agent_tool_calls(
+    tool_calls: list[object], messages: list[object], capture_key: str | None
+) -> list[str]:
+    saved_titles: list[str] = []
+    for tool_call in tool_calls:
+        name = tool_call.function.name
+        logger.info("Tool call started: %s", name)
+        result = execute_tool_call(
+            name, tool_call.function.arguments, capture_key=capture_key
+        )
+        if inspect.isawaitable(result):
+            result = await result
+        succeeded = result.get("ok") if isinstance(result, dict) else False
+        if succeeded and isinstance(result, dict):
+            saved_titles.extend(saved_titles_from_tool_result(name, result))
+        logger.info("Tool call completed: %s ok=%s", name, succeeded)
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": json.dumps(result),
+            }
+        )
+    return saved_titles
+
+
+def saved_titles_from_tool_result(name: str, result: dict[str, object]) -> list[str]:
+    if name == "save_brain_item":
+        item = result.get("brain_item")
+        if isinstance(item, dict) and isinstance(item.get("title"), str):
+            return [item["title"]]
+    if name == "capture_brain_content":
+        capture = result.get("capture")
+        if isinstance(capture, dict) and isinstance(capture.get("titles"), list):
+            return [title for title in capture["titles"] if isinstance(title, str)]
+    return []
+
+
 def append_saved_item_notice(reply: str, saved_titles: list[str]) -> str:
     if not saved_titles:
         return reply
-    return f"{reply}\n\nSaved to your brain: {saved_titles[-1]}."
+    return f"{reply}\n\nSaved to your brain: {', '.join(dict.fromkeys(saved_titles))}."
 
 
 def brain_context(text: str) -> str:

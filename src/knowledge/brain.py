@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from src.conversations.history import database_connection, format_timestamp
+from src.knowledge.captures import Capture, CapturePlan
 
 
 BRAIN_ITEM_TYPES = frozenset(
@@ -23,6 +24,8 @@ class BrainItem:
     item_type: str
     tags: list[str]
     source_type: str
+    source_url: str | None
+    source_published_at: datetime | None
     capture_mode: str
     status: str
     due_at: datetime | None
@@ -54,7 +57,7 @@ def _tables(connection: sqlite3.Connection) -> set[str]:
     return {row["name"] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
 
 
-def _initialize_schema(connection: sqlite3.Connection) -> None:
+def _create_brain_tables(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE TABLE IF NOT EXISTS brain_settings ("
         "id INTEGER PRIMARY KEY CHECK (id = 1), auto_capture_enabled INTEGER NOT NULL, "
@@ -69,12 +72,56 @@ def _initialize_schema(connection: sqlite3.Connection) -> None:
         "recurrence_rule TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
         "last_recalled_at TEXT, completed_at TEXT)"
     )
+
+
+def _create_capture_tables(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS brain_captures ("
+        "id INTEGER PRIMARY KEY, request TEXT NOT NULL, analysis TEXT NOT NULL, "
+        "rationale TEXT NOT NULL, captured_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS brain_capture_items ("
+        "capture_id INTEGER NOT NULL REFERENCES brain_captures(id), "
+        "brain_item_id INTEGER NOT NULL REFERENCES brain_items(id), "
+        "PRIMARY KEY (capture_id, brain_item_id))"
+    )
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS brain_item_relations ("
+        "source_item_id INTEGER NOT NULL REFERENCES brain_items(id), "
+        "target_item_id INTEGER NOT NULL REFERENCES brain_items(id), "
+        "relation_type TEXT NOT NULL, explanation TEXT NOT NULL, confidence REAL NOT NULL, "
+        "origin TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
+        "PRIMARY KEY (source_item_id, target_item_id, relation_type))"
+    )
+
+
+def _create_reminder_table(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE TABLE IF NOT EXISTS reminder_deliveries ("
         "id INTEGER PRIMARY KEY, brain_item_id INTEGER NOT NULL REFERENCES brain_items(id), "
         "scheduled_at TEXT NOT NULL, status TEXT NOT NULL, lease_expires_at TEXT, "
         "lease_token TEXT, attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT, "
         "delivered_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+
+
+def _add_source_published_at(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(brain_items)")
+    }
+    if "source_published_at" not in columns:
+        connection.execute("ALTER TABLE brain_items ADD COLUMN source_published_at TEXT")
+
+
+def _create_indexes(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS brain_captures_captured_at_index "
+        "ON brain_captures(captured_at DESC)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS brain_relations_endpoints_index "
+        "ON brain_item_relations(source_item_id, target_item_id)"
     )
     connection.execute(
         "CREATE INDEX IF NOT EXISTS brain_items_status_created_index "
@@ -88,6 +135,9 @@ def _initialize_schema(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS reminder_deliveries_due_index "
         "ON reminder_deliveries(status, scheduled_at)"
     )
+
+
+def _create_search_index(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE VIRTUAL TABLE IF NOT EXISTS brain_items_fts "
         "USING fts5(title, summary, content, content='brain_items', content_rowid='id')"
@@ -109,11 +159,24 @@ def _initialize_schema(connection: sqlite3.Connection) -> None:
         "INSERT INTO brain_items_fts(rowid, title, summary, content) "
         "VALUES (new.id, new.title, new.summary, new.content); END"
     )
+
+
+def _initialize_settings(connection: sqlite3.Connection) -> None:
     connection.execute(
         "INSERT OR IGNORE INTO brain_settings (id, auto_capture_enabled, updated_at) "
         "VALUES (1, 1, ?)",
         (format_timestamp(utc_now()),),
     )
+
+
+def _initialize_schema(connection: sqlite3.Connection) -> None:
+    _create_brain_tables(connection)
+    _create_capture_tables(connection)
+    _create_reminder_table(connection)
+    _add_source_published_at(connection)
+    _create_indexes(connection)
+    _create_search_index(connection)
+    _initialize_settings(connection)
 
 
 def _migrate_legacy_data(connection: sqlite3.Connection) -> None:
@@ -186,6 +249,11 @@ def item_from_row(row: sqlite3.Row) -> BrainItem:
         item_type=row["item_type"],
         tags=json.loads(row["tags_json"]),
         source_type=row["source_type"],
+        source_url=row["source_url"],
+        source_published_at=(
+            parse_timestamp(row["source_published_at"])
+            if row["source_published_at"] else None
+        ),
         capture_mode=row["capture_mode"],
         status=row["status"],
         due_at=parse_timestamp(row["due_at"]) if row["due_at"] else None,
@@ -208,6 +276,7 @@ def create_item(
     *,
     capture_key: str | None = None,
     source_url: str | None = None,
+    source_published_at: datetime | None = None,
     due_at: datetime | None = None,
     timezone_name: str | None = None,
     recurrence_rule: str | None = None,
@@ -218,12 +287,14 @@ def create_item(
         _migrate_legacy_data(connection)
         cursor = connection.execute(
             "INSERT OR IGNORE INTO brain_items "
-            "(content, title, summary, item_type, tags_json, source_type, source_url, capture_mode, "
+            "(content, title, summary, item_type, tags_json, source_type, source_url, source_published_at, capture_mode, "
             "capture_key, status, due_at, timezone, recurrence_rule, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)",
             (
                 content.strip(), title.strip(), summary.strip(), item_type, json.dumps(tags),
-                source_type, source_url, capture_mode, capture_key,
+                source_type, source_url,
+                format_timestamp(source_published_at) if source_published_at else None,
+                capture_mode, capture_key,
                 format_timestamp(due_at) if due_at else None,
                 timezone_name, recurrence_rule, now, now,
             ),
@@ -236,6 +307,93 @@ def create_item(
             ).fetchone()["id"]
         row = connection.execute("SELECT * FROM brain_items WHERE id = ?", (row_id,)).fetchone()
     return item_from_row(row)
+
+
+def create_capture(plan: CapturePlan) -> Capture:
+    captured_at = format_timestamp(utc_now())
+    with database_connection() as connection:
+        _initialize_schema(connection)
+        cursor = connection.execute(
+            "INSERT INTO brain_captures (request, analysis, rationale, captured_at) VALUES (?, ?, ?, ?)",
+            (plan.request, plan.analysis, plan.rationale, captured_at),
+        )
+        capture_id = cursor.lastrowid
+        for planned_item in plan.items:
+            item_cursor = connection.execute(
+                "INSERT INTO brain_items "
+                "(content, title, summary, item_type, tags_json, source_type, source_url, "
+                "source_published_at, capture_mode, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, 'capture', ?, ?, 'explicit', 'active', ?, ?)",
+                (
+                    planned_item.content.strip(), planned_item.title.strip(),
+                    planned_item.summary.strip(), planned_item.item_type,
+                    json.dumps(planned_item.tags), planned_item.source_url,
+                    planned_item.source_published_at, captured_at, captured_at,
+                ),
+            )
+            connection.execute(
+                "INSERT INTO brain_capture_items (capture_id, brain_item_id) VALUES (?, ?)",
+                (capture_id, item_cursor.lastrowid),
+            )
+    return Capture(capture_id, plan.request, plan.analysis, plan.rationale, captured_at)
+
+
+def items_for_capture(capture_id: int) -> list[BrainItem]:
+    initialize_schema()
+    with database_connection() as connection:
+        rows = connection.execute(
+            "SELECT brain_items.* FROM brain_items JOIN brain_capture_items "
+            "ON brain_capture_items.brain_item_id = brain_items.id "
+            "WHERE brain_capture_items.capture_id = ? ORDER BY brain_items.id",
+            (capture_id,),
+        ).fetchall()
+    return [item_from_row(row) for row in rows]
+
+
+def create_relation(
+    source_id: int, target_id: int, relation_type: str, explanation: str,
+    confidence: float, origin: str,
+) -> None:
+    now = format_timestamp(utc_now())
+    with database_connection() as connection:
+        _initialize_schema(connection)
+        connection.execute(
+            "INSERT INTO brain_item_relations "
+            "(source_item_id, target_item_id, relation_type, explanation, confidence, origin, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(source_item_id, target_item_id, relation_type) DO UPDATE SET "
+            "explanation = excluded.explanation, confidence = excluded.confidence, "
+            "origin = excluded.origin, updated_at = excluded.updated_at",
+            (source_id, target_id, relation_type, explanation, confidence, origin, now, now),
+        )
+
+
+def relations_for_item(item_id: int) -> list[dict[str, object]]:
+    initialize_schema()
+    with database_connection() as connection:
+        rows = connection.execute(
+            "SELECT * FROM brain_item_relations WHERE source_item_id = ? OR target_item_id = ? "
+            "ORDER BY updated_at DESC", (item_id, item_id)
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def brain_timeline(limit: int = 20) -> list[dict[str, object]]:
+    initialize_schema()
+    with database_connection() as connection:
+        captures = connection.execute(
+            "SELECT * FROM brain_captures ORDER BY captured_at DESC, id DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [
+        {
+            **dict(capture),
+            "items": [
+                {"id": item.id, "title": item.title, "summary": item.summary}
+                for item in items_for_capture(capture["id"])
+            ],
+        }
+        for capture in captures
+    ]
 
 
 def get_item(item_id: int) -> BrainItem | None:

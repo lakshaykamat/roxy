@@ -13,6 +13,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from src import config
 from src.knowledge import brain, brain_tools
+from src.knowledge.captures import CaptureItem, CapturePlan
 from src.reminders import repository as tasks
 
 
@@ -64,6 +65,32 @@ class BrainTests(unittest.TestCase):
         first = brain.create_item("Idea", "Idea", "An idea", "idea", [], "text", "automatic", capture_key="telegram:7:12:12")
         second = brain.create_item("Idea", "Idea", "An idea", "idea", [], "text", "automatic", capture_key="telegram:7:12:12")
         self.assertEqual((first.id, second.id, len(brain.list_recent_items())), (1, 1, 1))
+
+    def test_compound_capture_keeps_parent_and_two_searchable_children(self):
+        plan = CapturePlan(
+            "save these", "Two useful insights.", "Separated by topic.",
+            [
+                CaptureItem("first insight", "First insight", "First insight", "idea", []),
+                CaptureItem("second insight", "Second insight", "Second insight", "idea", []),
+            ],
+        )
+
+        capture = brain.create_capture(plan)
+
+        self.assertEqual(len(brain.items_for_capture(capture.id)), 2)
+        self.assertEqual(brain.search_items("first insight")[0].title, "First insight")
+        self.assertEqual(len(brain.brain_timeline(1)), 1)
+
+    def test_relation_is_merged_not_duplicated(self):
+        first = brain.create_item("First", "First", "First", "idea", [], "text", "explicit")
+        second = brain.create_item("Second", "Second", "Second", "idea", [], "text", "explicit")
+
+        brain.create_relation(first.id, second.id, "supports", "same project evidence", .8, "inferred")
+        brain.create_relation(first.id, second.id, "supports", "updated evidence", .9, "inferred")
+
+        relations = brain.relations_for_item(first.id)
+        self.assertEqual(len(relations), 1)
+        self.assertEqual((relations[0]["explanation"], relations[0]["confidence"]), ("updated evidence", .9))
 
     def test_automatic_save_respects_the_pause_setting(self):
         brain.set_auto_capture_enabled(False)

@@ -23,10 +23,13 @@ Reminders (schedule_task, manage_reminders):
 - To change or remove specific reminders, use action "list" to identify them if
   needed, then "remove" or "update". Confirm the result briefly.
 
-Second brain (save_brain_item, search_brain, archive_brain_item, delete_brain_item):
-- For a brain request, call save_brain_item before replying. Use capture_mode "automatic" for a durable idea, fact, preference, person, project, goal, decision, reference, or reflection inferred from the user's message. Use "explicit" when they directly ask to save it.
-- Give every saved item a short title, a retrieval-friendly summary, a supported item type, and concise lowercase tags. Never save greetings, passwords, API keys, account numbers, health details, precise locations, expenses, or content marked "don't save".
-- Only say an item was saved after the tool succeeds. The application adds the saved-item notice automatically.
+Second brain (capture_brain_content, search_brain, archive_brain_item, delete_brain_item):
+- When the user explicitly says "save this" or "remember this", call capture_brain_content immediately. Do not ask for a second confirmation. Include every distinct public link in urls.
+- If a capture returns needs_description, ask its single question. Only say content was saved after the tool succeeds. The application adds the saved-item notice automatically.
+- Use search_brain only for stored content. Archive or delete only an item that has already been identified.
+
+Web research (search_web):
+- For current facts or natural web research, call search_web and cite the returned URLs in the reply. Never save research results unless the user later makes an explicit save request.
 """
 
 EXPENSE_SYSTEM_PROMPT = """
