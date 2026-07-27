@@ -5,7 +5,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("ALLOWED_USER_ID", "1")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
@@ -165,24 +165,71 @@ class BrainStoreTests(unittest.TestCase):
         result = asyncio.run(
             tools.save_brain_item(
                 '{"content":"Idea","title":"Idea","summary":"An idea","item_type":"idea","tags":[],"capture_mode":"automatic"}'
+                , capture_key="telegram:7:12:0"
             )
         )
 
         self.assertFalse(result["ok"])
         self.assertEqual(brain_store.list_recent_items(), [])
 
+    def test_automatic_save_stores_main_model_metadata_without_analysis(self):
+        arguments = json.dumps({
+            "content": "Lakshay Kamat is an AI engineer.",
+            "title": "Lakshay Kamat",
+            "summary": "Lakshay works as an AI engineer.",
+            "item_type": "fact",
+            "tags": ["entity:lakshay kamat", "domain:career"],
+            "capture_mode": "automatic",
+        })
+
+        with patch("src.knowledge.tools.analyze_and_save_item", new=AsyncMock()) as analyze:
+            result = asyncio.run(
+                tools.save_brain_item(arguments, capture_key="telegram:7:12:0")
+            )
+
+        analyze.assert_not_awaited()
+        self.assertTrue(result["ok"])
+        item = brain_store.list_recent_items()[0]
+        self.assertEqual(
+            (item.title, item.summary, item.item_type, item.tags),
+            ("Lakshay Kamat", "Lakshay works as an AI engineer.", "fact", ["entity:lakshay kamat", "domain:career"]),
+        )
+
+    def test_automatic_save_requires_a_capture_key(self):
+        result = asyncio.run(
+            tools.save_brain_item(
+                '{"content":"Idea","title":"Idea","summary":"An idea","item_type":"idea","tags":[],"capture_mode":"automatic"}'
+            )
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("capture key", result["error"])
+        self.assertEqual(brain_store.list_recent_items(), [])
+
+    def test_automatic_save_rejects_a_non_telegram_capture_key(self):
+        result = asyncio.run(
+            tools.save_brain_item(
+                '{"content":"Idea","title":"Idea","summary":"An idea","item_type":"idea","tags":[],"capture_mode":"automatic"}',
+                capture_key="not-a-telegram-key",
+            )
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("capture key", result["error"])
+
     def test_automatic_save_accepts_any_content(self):
-        for content in (
+        for index, content in enumerate((
             "Don't save this idea",
             "My API key is secret",
             "My home address is 12 Example Street",
-        ):
+        )):
             result = asyncio.run(
                 tools.save_brain_item(
                     json.dumps({
                         "content": content, "title": "Private", "summary": content,
                         "item_type": "idea", "tags": [], "capture_mode": "automatic",
-                    })
+                    }),
+                    capture_key=f"telegram:7:{index}:0",
                 )
             )
             self.assertTrue(result["ok"])
@@ -290,7 +337,7 @@ class BrainStoreTests(unittest.TestCase):
             "src.knowledge.tools.brain_store.save_item",
             side_effect=sqlite3.OperationalError("malformed database schema"),
         ) as mocked_create_item:
-            result = asyncio.run(tools.save_brain_item(arguments))
+            result = asyncio.run(tools.save_brain_item(arguments, capture_key="telegram:7:12:12"))
 
         self.assertFalse(result["ok"])
         self.assertEqual(mocked_create_item.call_count, 1)

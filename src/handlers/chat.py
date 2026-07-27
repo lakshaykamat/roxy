@@ -12,15 +12,14 @@ from telegram.ext import ContextTypes
 from src import config
 from src.prompts.system import SYSTEM_PROMPT
 from src.agent.tool_registry import (
-    available_tool_intents,
     execute_tool_call,
-    tool_definitions_for_intent,
+    TOOL_DEFINITIONS,
 )
 from src.core.debounce import DebounceCoordinator, PendingMessage
 from src.core.errors import log_async_error, retry_async, try_async
 from src.conversations import history
 from src.knowledge import brain_store
-from src.core.llm import ask_llm, classify_tool_intent
+from src.core.llm import ask_llm
 from src.core.transcription import transcribe_voice
 
 logger = logging.getLogger(__name__)
@@ -87,7 +86,7 @@ async def submit_chat_text(
     update: Update, context: ContextTypes.DEFAULT_TYPE, text: str
 ) -> None:
     chat_id = update.effective_chat.id
-    logger.info("Received text message in chat %s", chat_id)
+    logger.info("Received text message in chat %s: %s", chat_id, text)
     message_id = history.add("user", text)
 
     debounce_coordinator.submit(
@@ -161,7 +160,7 @@ async def process_burst(chat_id: int, pending_messages: list[PendingMessage]) ->
         return
 
     history.add("assistant", reply)
-    logger.info("Chat response sent for chat %s", chat_id)
+    logger.info("Chat response sent for chat %s: %s", chat_id, reply)
 
 
 async def send_fallback_reply(
@@ -200,45 +199,28 @@ async def send_reply_with_retry(
 def build_burst_messages(pending_messages: list[PendingMessage]) -> list[object]:
     current_time = datetime.now(ZoneInfo(config.TASK_TIMEZONE)).isoformat()
     user_message = "\n".join(message.text for message in pending_messages)
-    user_message += f"\n\nCurrent time in {config.TASK_TIMEZONE}: {current_time}"
+    time_context = (
+        f"Current time in {config.TASK_TIMEZONE}: {current_time}. "
+        "This is system context, not user content. Never save it to the user's brain."
+    )
 
     context = build_brain_context(user_message)
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         *([{"role": "system", "content": context}] if context else []),
         *history.get_before(pending_messages[0].id),
+        {"role": "system", "content": time_context},
         {"role": "user", "content": user_message},
     ]
-
-
-async def select_agent_tools(messages: list[object]) -> tuple[list[object] | None, str | None]:
-    if (
-        not messages
-        or not isinstance(messages[-1], dict)
-        or messages[-1].get("role") != "user"
-    ):
-        return None, None
-
-    intent, requires_tool = await classify_tool_intent(messages, available_tool_intents())
-    if intent is not None:
-        logger.info("Tool intent decision: intent=%s requires_tool=%s", intent, requires_tool)
-        if requires_tool:
-            return tool_definitions_for_intent(intent), "required"
-        return None, None
-
-    logger.info("Tool intent decision: intent=general requires_tool=False")
-    return None, None
 
 
 debounce_coordinator = DebounceCoordinator(config.CHAT_DEBOUNCE_SECONDS, process_burst)
 
 
 async def run_agent_loop(messages: list[object], *, capture_key: str | None = None) -> str:
-    tools, tool_choice = await select_agent_tools(messages)
     saved_titles: list[str] = []
     for _ in range(config.MAX_TOOL_CALL_ROUNDS):
-        response = await ask_llm(messages, tools=tools, tool_choice=tool_choice)
-        tool_choice = None
+        response = await ask_llm(messages, tools=TOOL_DEFINITIONS, tool_choice=None)
         message = response.choices[0].message
         if not message.tool_calls:
             reply = message.content or "Sorry, I couldn't prepare a response."
@@ -261,18 +243,24 @@ async def execute_agent_tool_calls(
     tool_calls: list[object], messages: list[object], capture_key: str | None
 ) -> list[str]:
     saved_titles: list[str] = []
-    for tool_call in tool_calls:
+    for index, tool_call in enumerate(tool_calls):
         name = tool_call.function.name
-        logger.info("Tool call started: %s", name)
+        arguments = tool_call.function.arguments
+        logger.info("Tool call started: %s arguments=%s", name, arguments)
         result = execute_tool_call(
-            name, tool_call.function.arguments, capture_key=capture_key
+            name, arguments, capture_key=tool_capture_key(capture_key, index)
         )
         if inspect.isawaitable(result):
             result = await result
         succeeded = result.get("ok") if isinstance(result, dict) else False
         if succeeded and isinstance(result, dict):
             saved_titles.extend(saved_titles_from_tool_result(name, result))
-        logger.info("Tool call completed: %s ok=%s", name, succeeded)
+        logger.info(
+            "Tool call completed: %s ok=%s result=%s",
+            name,
+            succeeded,
+            json.dumps(result, default=str),
+        )
         messages.append(
             {
                 "role": "tool",
@@ -281,6 +269,12 @@ async def execute_agent_tool_calls(
             }
         )
     return saved_titles
+
+
+def tool_capture_key(capture_key: str | None, index: int) -> str | None:
+    if capture_key is None:
+        return None
+    return f"{capture_key}:{index}"
 
 
 def saved_titles_from_tool_result(name: str, result: dict[str, object]) -> list[str]:

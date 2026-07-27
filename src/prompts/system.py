@@ -24,6 +24,11 @@ Reminders (schedule_task, manage_reminders):
   needed, then "remove" or "update". Confirm the result briefly.
 
 Second brain (capture_brain_content, search_saved_items, archive_brain_item, delete_brain_item):
+- When the user clearly shares a durable identity, preference, work detail, person,
+  project, goal, or routine, call save_brain_item with concise content, title,
+  summary, a valid item_type, normalized tags, and capture_mode="automatic".
+  Save sensitive durable facts too. Do not save greetings, questions, casual chat,
+  temporary updates, assistant messages, system time, or web research output.
 - When the user explicitly says "save this" or "remember this", call capture_brain_content immediately. Do not ask for a second confirmation. Include every distinct public link in urls.
 - If a capture returns needs_description, ask its single question. Only say content was saved after the tool succeeds. The application adds the saved-item notice automatically.
 - Use search_saved_items only for stored content. Archive or delete only an item that has already been identified.

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import sqlite3
 
 from src.core.errors import retry_async, try_async
@@ -13,6 +14,7 @@ from src.knowledge.web_research import search_web
 
 logger = logging.getLogger(__name__)
 ITEM_TYPES = BRAIN_ITEM_TYPES
+TELEGRAM_CAPTURE_KEY_PATTERN = re.compile(r"telegram:\d+(?::\d+)+")
 
 DEFINITIONS = [
     {
@@ -139,6 +141,11 @@ async def save_brain_item(
         capture_mode = _text(values, "capture_mode")
         if capture_mode not in {"automatic", "explicit"}:
             raise ValueError("Capture mode must be automatic or explicit.")
+        if (
+            capture_mode == "automatic"
+            and (not capture_key or not TELEGRAM_CAPTURE_KEY_PATTERN.fullmatch(capture_key))
+        ):
+            raise ValueError("Automatic brain capture requires a capture key.")
         if capture_mode == "automatic" and not await asyncio.to_thread(brain_store.auto_capture_enabled):
             return {"ok": False, "error": "Automatic brain capture is paused."}
         item_type = _text(values, "item_type").lower()
@@ -147,14 +154,27 @@ async def save_brain_item(
         source_url = values.get("source_url")
         if source_url is not None and not isinstance(source_url, str):
             raise ValueError("Source URL must be text.")
-        item = await retry_async(
-            lambda: analyze_and_save_item(
+        if capture_mode == "automatic":
+            operation = lambda: asyncio.to_thread(
+                brain_store.save_item,
+                _text(values, "content"),
+                _text(values, "title"),
+                _text(values, "summary"),
+                item_type,
+                _tags(values),
+                "text",
+                capture_mode,
+                capture_key=capture_key,
+                source_url=source_url,
+            )
+        else:
+            operation = lambda: analyze_and_save_item(
                 _text(values, "content"), item_type, capture_mode,
                 title=_text(values, "title"), summary=_text(values, "summary"),
-                tags=_tags(values), source_type="text",
-                capture_key=capture_key if capture_mode == "automatic" else None,
-                source_url=source_url,
-            ),
+                tags=_tags(values), source_type="text", source_url=source_url,
+            )
+        item = await retry_async(
+            operation,
             attempts=3, retry_delay_seconds=0.1, logger=logger,
             error_message="Unable to save brain item", exception_types=sqlite3.OperationalError,
             should_retry=_is_busy_or_locked,

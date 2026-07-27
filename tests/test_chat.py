@@ -16,7 +16,6 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 from src import config
 from src.handlers import chat
 from src.core.debounce import DebounceCoordinator, PendingMessage
-from src.core import llm
 from src.reminders.repository import ScheduledTask
 
 
@@ -138,11 +137,11 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             messages[-2:],
             [
-                {"role": "user", "content": "Earlier"},
                 {
-                    "role": "user",
-                    "content": "First thought\nand second\n\nCurrent time in Asia/Kolkata: 2099-01-02T19:00:00+05:30",
+                    "role": "system",
+                    "content": "Current time in Asia/Kolkata: 2099-01-02T19:00:00+05:30. This is system context, not user content. Never save it to the user's brain.",
                 },
+                {"role": "user", "content": "First thought\nand second"},
             ],
         )
         add.assert_called_once_with("assistant", reply)
@@ -164,8 +163,28 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             messages[2],
             {
-                "role": "user",
-                "content": "First thought\n\nCurrent time in Asia/Kolkata: 2099-01-02T19:00:00+05:30",
+                "role": "system",
+                "content": "Current time in Asia/Kolkata: 2099-01-02T19:00:00+05:30. This is system context, not user content. Never save it to the user's brain.",
+            },
+        )
+        self.assertEqual(messages[3], {"role": "user", "content": "First thought"})
+
+    def test_build_burst_messages_keeps_clock_context_out_of_user_content(self):
+        pending_messages = [PendingMessage(4, "Save this info", AsyncMock())]
+
+        with patch("src.handlers.chat.history.get_before", return_value=[]), patch(
+            "src.handlers.chat.datetime"
+        ) as mocked_datetime:
+            mocked_datetime.now.return_value.isoformat.return_value = "2099-01-02T19:00:00+05:30"
+
+            messages = chat.build_burst_messages(pending_messages)
+
+        self.assertEqual(messages[-1], {"role": "user", "content": "Save this info"})
+        self.assertEqual(
+            messages[-2],
+            {
+                "role": "system",
+                "content": "Current time in Asia/Kolkata: 2099-01-02T19:00:00+05:30. This is system context, not user content. Never save it to the user's brain.",
             },
         )
 
@@ -251,155 +270,55 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("temperature", create.call_args.kwargs)
 
-    async def test_intent_router_uses_the_configured_model_for_expense_request(self):
+    async def test_normal_chat_uses_one_completion_with_all_tools_optional(self):
         response = SimpleNamespace(
-            choices=[
-                SimpleNamespace(
-                    message=SimpleNamespace(
-                        content='{"intent":"expenses","requires_tool":true}'
-                    )
-                )
-            ]
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Hey, I am good.", tool_calls=None))]
         )
 
-        with patch("src.core.llm.client.chat.completions.create", return_value=response) as create:
-            decision = await llm.classify_tool_intent(
-                [{"role": "user", "content": "Add 21rs expense as hema aunty"}],
-                {"expenses": "Track personal expenses"},
-            )
+        with patch("src.handlers.chat.ask_llm", new=AsyncMock(return_value=response)) as ask_llm:
+            reply = await chat.run_agent_loop([{"role": "user", "content": "How are you?"}])
 
-        self.assertEqual(decision, ("expenses", True))
-        self.assertEqual(create.call_args.kwargs["model"], config.INTENT_ROUTER_MODEL)
-        router_prompt = create.call_args.kwargs["messages"][0]["content"]
-        self.assertIn("Use general only for clearly conversational messages", router_prompt)
-        self.assertIn("Add 21rs expense as hema aunty", router_prompt)
-        self.assertEqual(
-            create.call_args.kwargs["response_format"],
-            {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "tool_intent",
-                    "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "intent": {"type": "string", "enum": ["general", "expenses"]},
-                            "requires_tool": {"type": "boolean"},
-                        },
-                        "required": ["intent", "requires_tool"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
+        self.assertEqual(reply, "Hey, I am good.")
+        self.assertEqual(ask_llm.await_count, 1)
+        self.assertEqual(ask_llm.await_args.kwargs["tools"], chat.TOOL_DEFINITIONS)
+        self.assertIsNone(ask_llm.await_args.kwargs["tool_choice"])
+
+    async def test_activity_logs_include_full_chat_and_tool_payloads(self):
+        tool_call = SimpleNamespace(
+            id="call_1",
+            function=SimpleNamespace(
+                name="save_brain_item",
+                arguments='{"content":"I prefer dark mode"}',
+            ),
         )
-
-    async def test_intent_router_returns_no_tool_for_general_chat(self):
-        response = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content='{"intent":"general","requires_tool":false}'))]
-        )
-
-        with patch("src.core.llm.client.chat.completions.create", return_value=response):
-            decision = await llm.classify_tool_intent(
-                [{"role": "user", "content": "How are you?"}],
-                {"expenses": "Track personal expenses"},
-            )
-
-        self.assertEqual(decision, (None, False))
-
-    async def test_expense_request_requires_an_expense_tool(self):
-        messages = [{"role": "user", "content": "Add 21rs expense as hema aunty"}]
-
-        with patch(
-            "src.handlers.chat.available_tool_intents", return_value={"expenses": "Track expenses"}
-        ), patch(
-            "src.handlers.chat.classify_tool_intent",
-            new=AsyncMock(return_value=("expenses", True)),
-        ), patch(
-            "src.handlers.chat.tool_definitions_for_intent", return_value=[{"name": "expense"}]
-        ):
-            tools, tool_choice = await chat.select_agent_tools(messages)
-
-        self.assertEqual(tools, [{"name": "expense"}])
-        self.assertEqual(tool_choice, "required")
-
-    async def test_reminder_request_uses_only_reminder_tools(self):
-        messages = [{"role": "user", "content": "Remind me to call Mum tomorrow at 10"}]
-
-        with patch(
-            "src.handlers.chat.available_tool_intents", return_value={"reminders": "Manage reminders"}
-        ), patch(
-            "src.handlers.chat.classify_tool_intent",
-            new=AsyncMock(return_value=("reminders", True)),
-        ), patch(
-            "src.handlers.chat.tool_definitions_for_intent", return_value=[{"name": "reminder"}]
-        ):
-            tools, tool_choice = await chat.select_agent_tools(messages)
-
-        self.assertEqual(tool_choice, "required")
-        self.assertEqual(tools, [{"name": "reminder"}])
-
-    async def test_explicit_save_selects_only_capture_tool(self):
-        messages = [{"role": "user", "content": "Save this idea: build a freelancer money app"}]
-        with patch(
-            "src.handlers.chat.classify_tool_intent",
-            new=AsyncMock(return_value=("brain_capture", True)),
-        ), patch(
-            "src.handlers.chat.tool_definitions_for_intent",
-            return_value=[
-                {"type": "function", "function": {"name": "capture_brain_content"}},
-            ],
-        ):
-            tools, choice = await chat.select_agent_tools(messages)
-
-        self.assertEqual(choice, "required")
-        self.assertEqual(tools, [{"type": "function", "function": {"name": "capture_brain_content"}}])
-
-    async def test_web_research_selects_only_search_web(self):
-        messages = [{"role": "user", "content": "Find current SQLite FTS5 guidance"}]
-        web_tools = [{"type": "function", "function": {"name": "search_web"}}]
-        with patch(
-            "src.handlers.chat.classify_tool_intent",
-            new=AsyncMock(return_value=("web_research", True)),
-        ), patch("src.handlers.chat.tool_definitions_for_intent", return_value=web_tools):
-            tools, choice = await chat.select_agent_tools(messages)
-
-        self.assertEqual((tools, choice), (web_tools, "required"))
-
-    async def test_brain_management_request_uses_only_lifecycle_tools(self):
-        messages = [{"role": "user", "content": "Search my brain for freelancer ideas"}]
-        lifecycle_tools = [{"type": "function", "function": {"name": "search_saved_items"}}]
-        with patch(
-            "src.handlers.chat.classify_tool_intent",
-            new=AsyncMock(return_value=("brain_management", True)),
-        ), patch("src.handlers.chat.tool_definitions_for_intent", return_value=lifecycle_tools):
-            tools, choice = await chat.select_agent_tools(messages)
-
-        self.assertEqual((tools, choice), (lifecycle_tools, "required"))
-
-    async def test_non_executable_tool_request_does_not_expose_tools(self):
-        messages = [{"role": "user", "content": "What expense categories can I use?"}]
-
-        with patch(
-            "src.handlers.chat.available_tool_intents", return_value={"expenses": "Track expenses"}
-        ), patch(
-            "src.handlers.chat.classify_tool_intent",
-            new=AsyncMock(return_value=("expenses", False)),
-        ):
-            tools, tool_choice = await chat.select_agent_tools(messages)
-
-        self.assertIsNone(tools)
-        self.assertIsNone(tool_choice)
-
-    async def test_tool_result_allows_a_normal_final_response(self):
-        messages = [
-            {"role": "user", "content": "Add 10rs biscuit"},
-            {"role": "tool", "content": "{\"ok\": true}"},
+        responses = [
+            SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[tool_call]))]),
+            SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Done", tool_calls=None))]),
+            SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Done", tool_calls=None))]),
         ]
+        update = MagicMock()
+        update.effective_chat.id = 7
+        update.message.chat.send_action = AsyncMock()
+        context = MagicMock()
+        send_reply = AsyncMock()
 
-        tools, tool_choice = await chat.select_agent_tools(messages)
+        with self.assertLogs("src.handlers.chat", "INFO") as logs, patch(
+            "src.handlers.chat.debounce_coordinator"
+        ), patch("src.handlers.chat.history.add", return_value=12), patch(
+            "src.handlers.chat.ask_llm", new=AsyncMock(side_effect=responses)
+        ), patch(
+            "src.handlers.chat.execute_tool_call",
+            return_value={"ok": True, "brain_item": {"title": "Dark mode"}},
+        ), patch("src.handlers.chat.history.get_before", return_value=[]):
+            await chat.submit_chat_text(update, context, "I prefer dark mode")
+            await chat.run_agent_loop([{"role": "user", "content": "I prefer dark mode"}])
+            await chat.process_burst(7, [PendingMessage(12, "I prefer dark mode", send_reply)])
 
-        self.assertIsNone(tool_choice)
-        self.assertIsNone(tools)
+        output = "\n".join(logs.output)
+        self.assertIn("Received text message in chat 7: I prefer dark mode", output)
+        self.assertIn('Tool call started: save_brain_item arguments={"content":"I prefer dark mode"}', output)
+        self.assertIn('Tool call completed: save_brain_item ok=True result={"ok": true', output)
+        self.assertIn("Chat response sent for chat 7: Done", output)
 
     def test_execute_tool_call_returns_task_details(self):
         task = ScheduledTask(
@@ -488,7 +407,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[tool_call]))]),
             SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Nice idea.", tool_calls=None))]),
         ]
-        with patch("src.handlers.chat.select_agent_tools", new=AsyncMock(return_value=([], None))), patch(
+        with patch(
             "src.handlers.chat.ask_llm", new=AsyncMock(side_effect=responses)
         ), patch(
             "src.handlers.chat.execute_tool_call",
@@ -497,6 +416,32 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             reply = await chat.run_agent_loop([{"role": "user", "content": "Build an app"}], capture_key="telegram:7:1:1")
 
         self.assertEqual(reply, "Nice idea.\n\nSaved to your brain: Freelancer app.")
+
+    async def test_agent_loop_uses_unique_capture_keys_for_multiple_automatic_saves(self):
+        tool_calls = [
+            SimpleNamespace(
+                id=f"call_{index}",
+                function=SimpleNamespace(name="save_brain_item", arguments="{}"),
+            )
+            for index in range(2)
+        ]
+        responses = [
+            SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=tool_calls))]),
+            SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Saved.", tool_calls=None))]),
+        ]
+        with patch("src.handlers.chat.ask_llm", new=AsyncMock(side_effect=responses)), patch(
+            "src.handlers.chat.execute_tool_call",
+            return_value={"ok": True, "brain_item": {"title": "Fact"}},
+        ) as execute:
+            await chat.run_agent_loop(
+                [{"role": "user", "content": "Two durable facts"}],
+                capture_key="telegram:7:12:12",
+            )
+
+        self.assertEqual(
+            [call.kwargs["capture_key"] for call in execute.call_args_list],
+            ["telegram:7:12:12:0", "telegram:7:12:12:1"],
+        )
 
     def test_saved_titles_from_capture_result_returns_each_title(self):
         titles = chat.saved_titles_from_tool_result(
@@ -513,8 +458,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         )
         response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[tool_call]))])
         with patch.object(config, "MAX_TOOL_CALL_ROUNDS", 1), patch(
-            "src.handlers.chat.select_agent_tools", new=AsyncMock(return_value=([], None))
-        ), patch("src.handlers.chat.ask_llm", new=AsyncMock(return_value=response)
+            "src.handlers.chat.ask_llm", new=AsyncMock(return_value=response)
         ), patch(
             "src.handlers.chat.execute_tool_call",
             return_value={"ok": True, "brain_item": {"title": "Freelancer app"}},
@@ -527,7 +471,6 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_agent_loop_keeps_selected_tools_after_a_tool_result(self):
-        reminder_tools = [{"type": "function", "function": {"name": "manage_reminders"}}]
         list_call = SimpleNamespace(
             id="call_1",
             function=SimpleNamespace(name="manage_reminders", arguments='{"action":"list"}'),
@@ -551,9 +494,6 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "src.handlers.chat.select_agent_tools",
-            new=AsyncMock(return_value=(reminder_tools, "required")),
-        ) as select_tools, patch(
             "src.handlers.chat.ask_llm", new=AsyncMock(side_effect=responses)
         ) as ask_llm, patch(
             "src.handlers.chat.execute_tool_call", return_value={"ok": True}
@@ -561,12 +501,10 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             reply = await chat.run_agent_loop([{"role": "user", "content": "Delete lunch"}])
 
         self.assertEqual(reply, "Removed it.")
-        select_tools.assert_awaited_once()
         self.assertEqual(ask_llm.await_count, 3)
-        for index, call_args in enumerate(ask_llm.await_args_list):
-            self.assertEqual(call_args.kwargs["tools"], reminder_tools)
-            expected_tool_choice = "required" if index == 0 else None
-            self.assertEqual(call_args.kwargs["tool_choice"], expected_tool_choice)
+        for call_args in ask_llm.await_args_list:
+            self.assertEqual(call_args.kwargs["tools"], chat.TOOL_DEFINITIONS)
+            self.assertIsNone(call_args.kwargs["tool_choice"])
 
     async def test_agent_loop_stops_after_tool_call_limit(self):
         tool_call = SimpleNamespace(

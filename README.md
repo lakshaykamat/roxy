@@ -105,11 +105,17 @@ instead of guessing.
 
 You can also ask natural-language questions such as “find current SQLite FTS5
 guidance.” Roxy's web research returns cited results but does not save them
-unless you explicitly ask. Explicit saves and eligible automatic Brain saves
-are analyzed for concise metadata and safe thought connections. At 3:00 AM in
-`TASK_TIMEZONE`, the reminder worker revisits recent active items and older
-unconnected items to refresh eligible connections; it never creates a nightly
-note or sends a Telegram message for that work.
+unless you explicitly ask. Explicit saves are analyzed for concise metadata and
+safe thought connections. Automatic saves store the main chat model's metadata
+directly; relationship analysis runs only at 3:00 AM in `TASK_TIMEZONE`, when
+the reminder worker revisits recent active items and older unconnected items.
+It never creates a nightly note or sends a Telegram message for that work.
+
+Normal chat uses one model completion. A tool action, including automatic
+memory capture, uses two completions: one to request the tool and one to reply
+after its result. Multi-step tool loops use one additional completion per
+tool-result round. Roxy does not make separate intent-router, memory-classifier,
+per-message Brain-analysis, or per-message relation-analysis calls.
 
 Health and readiness endpoints remain public for orchestration. Restrict their
 network access at your deployment boundary when appropriate.
@@ -143,8 +149,8 @@ Use `/start` once to show Roxy's persistent keyboard. After that, use its button
 ## Privacy and service health
 
 Roxy automatically captures durable ideas, facts, preferences, people, projects,
-goals, decisions, references, and reflections. It does not capture casual chat,
-sensitive information, expenses, or content marked “don't save.” Use
+goals, decisions, references, and reflections, including sensitive durable
+facts. It does not capture casual chat, expenses, or content marked “don't save.” Use
 the Pause brain button to pause automatic capture; direct save requests still work.
 Tasks are brain items, while their notification attempts are stored separately.
 `/ready` returns `503` when the bot database is unavailable; `/health` is

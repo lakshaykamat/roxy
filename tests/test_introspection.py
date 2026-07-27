@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
@@ -27,6 +28,27 @@ class IntrospectionTests(unittest.IsolatedAsyncioTestCase):
         before = len(brain_store.list_recent_items(100))
         await refresh_brain_connections(datetime.now(timezone.utc))
         self.assertEqual(len(brain_store.list_recent_items(100)), before)
+
+    async def test_automatic_save_skips_relation_analysis_until_nightly_refresh(self):
+        from src.knowledge import tools
+
+        arguments = (
+            '{"content":"Lakshay is an AI engineer","title":"Lakshay",'
+            '"summary":"Lakshay works in AI","item_type":"fact",'
+            '"tags":["domain:career"],"capture_mode":"automatic"}'
+        )
+        with patch(
+            "src.knowledge.introspection.relation_candidates",
+            new=AsyncMock(return_value=[]),
+        ) as relation_candidates:
+            result = await tools.save_brain_item(
+                arguments, capture_key="telegram:7:12:0"
+            )
+            relation_candidates.assert_not_awaited()
+            await refresh_brain_connections(datetime.now(timezone.utc))
+
+        self.assertTrue(result["ok"])
+        relation_candidates.assert_awaited_once()
 
     async def test_eligible_items_include_recent_and_unconnected_records(self):
         recent = brain_store.save_item("Recent", "Recent", "Recent", "idea", [], "text", "explicit")
