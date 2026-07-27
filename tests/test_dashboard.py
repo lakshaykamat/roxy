@@ -12,6 +12,7 @@ from src import config
 from src.dashboard import service as dashboard
 from src.conversations import history
 from src.knowledge import brain_store
+from src.knowledge.capture_planner import CaptureItem, CapturePlan, CaptureRelation
 from src.reminders import repository as tasks
 
 
@@ -41,3 +42,36 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(snapshot["services"], {})
         self.assertNotIn("private chat body", str(snapshot))
         self.assertNotIn("private memory", str(snapshot))
+
+    def test_brain_snapshot_includes_active_items_timeline_and_explained_relations(self):
+        project = brain_store.save_item(
+            "Roxy project", "Roxy", "The Roxy project", "project", [], "text", "explicit"
+        )
+        capture = brain_store.save_capture(
+            CapturePlan(
+                "Save roadmap",
+                "The roadmap supports Roxy.",
+                "Keep the source with the project.",
+                [CaptureItem(
+                    "Roadmap details", "Roadmap", "Roadmap details", "reference", [],
+                    source_url="https://example.com/roadmap",
+                )],
+                [CaptureRelation(0, project.id, "source_for", "The roadmap documents Roxy.", .9)],
+            )
+        )
+
+        snapshot = dashboard.get_brain_snapshot()
+        roadmap = next(item for item in snapshot["items"] if item["title"] == "Roadmap")
+
+        self.assertEqual(snapshot["timeline"][0]["id"], capture.id)
+        self.assertEqual(roadmap["source_state"], "analyzed")
+        self.assertEqual(roadmap["relations"][0]["explanation"], "The roadmap documents Roxy.")
+
+    def test_delete_brain_item_requires_exact_active_title(self):
+        item = brain_store.save_item(
+            "Keep focus", "Focus", "Keep focus", "goal", [], "text", "explicit"
+        )
+
+        self.assertFalse(dashboard.delete_brain_item(item.id, "Other"))
+        self.assertTrue(dashboard.delete_brain_item(item.id, "Focus"))
+        self.assertIsNone(brain_store.get_item(item.id))

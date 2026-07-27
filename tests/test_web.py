@@ -12,7 +12,7 @@ os.environ.setdefault("DASHBOARD_SESSION_SECRET", "session-secret")
 from fastapi.testclient import TestClient
 
 from src import config
-from src.web import app, render_dashboard
+from src.web import app, render_brain_explorer, render_dashboard
 
 SAFE_SNAPSHOT = {
     "generated_at": "2026-07-25T12:00:00+00:00",
@@ -24,6 +24,35 @@ SAFE_SNAPSHOT = {
     "tasks": {"by_status": {}},
     "reminders": {"by_status": {}, "overdue_pending": 0, "upcoming": [], "recent_failures": []},
     "notices": [],
+}
+
+BRAIN_SNAPSHOT = {
+    "timeline": [{
+        "id": 4,
+        "request": "Save project notes",
+        "analysis": "Two related project records.",
+        "rationale": "Stored separately for recall.",
+        "captured_at": "2026-07-25T12:00:00+00:00",
+        "items": [{"id": 7, "title": "Focus"}],
+    }],
+    "items": [{
+        "id": 7,
+        "title": "Focus",
+        "summary": "Focus note",
+        "item_type": "goal",
+        "tags": ["work"],
+        "source_url": "https://example.com/focus",
+        "source_state": "analyzed",
+        "captured_at": "2026-07-25T12:00:00+00:00",
+        "source_published_at": None,
+        "capture_summary": "Two related project records.",
+        "relations": [{
+            "related_item_id": 8,
+            "related_item_title": "Plan",
+            "relation_type": "supports",
+            "explanation": "Focus supports the project plan.",
+        }],
+    }],
 }
 
 
@@ -89,52 +118,43 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/login")
 
-    def test_brain_data_returns_active_graph_for_an_authenticated_session(self):
-        graph = {
-            "nodes": [{"id": 1, "title": "Focus", "summary": "Focus note", "item_type": "goal", "tags": ["focus"], "source_url": None}],
-            "edges": [],
-        }
+    def test_brain_data_returns_active_snapshot_for_an_authenticated_session(self):
         client = self.authenticated_client()
 
-        with patch("src.web.dashboard.get_brain_graph_data", return_value=graph):
+        with patch("src.web.dashboard.get_brain_snapshot", return_value=BRAIN_SNAPSHOT):
             response = client.get("/brain-data")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), graph)
+        self.assertEqual(response.json(), BRAIN_SNAPSHOT)
 
-    def test_brain_page_renders_svg_and_accessible_item_details(self):
-        graph = {
-            "nodes": [{"id": 1, "title": "Focus", "summary": "Focus note", "item_type": "goal", "tags": ["focus"], "source_url": "https://example.com"}],
-            "edges": [],
-        }
+    def test_brain_page_renders_timeline_connections_and_accessible_item_details(self):
         client = self.authenticated_client()
 
-        with patch("src.web.dashboard.get_brain_graph_data", return_value=graph):
+        with patch("src.web.dashboard.get_brain_snapshot", return_value=BRAIN_SNAPSHOT):
             response = client.get("/brain")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn('<svg', response.text)
+        self.assertIn("TIMELINE", response.text)
+        self.assertIn("CONNECTIONS", response.text)
+        self.assertIn("SAVED_ITEMS", response.text)
         self.assertIn("Focus note", response.text)
-        self.assertIn("https://example.com", response.text)
+        self.assertIn("Focus supports the project plan.", response.text)
+        self.assertIn('datetime="2026-07-25T12:00:00+00:00"', response.text)
+        self.assertIn('href="https://example.com/focus"', response.text)
+        self.assertIn('data-delete-title="Focus"', response.text)
 
     def test_brain_page_does_not_render_unsafe_source_url_as_a_link(self):
-        graph = {
-            "nodes": [{"id": 1, "title": "Unsafe", "summary": "Unsafe link", "item_type": "idea", "tags": [], "source_url": "javascript:alert(1)"}],
-            "edges": [],
-        }
-        client = self.authenticated_client()
+        snapshot = {**BRAIN_SNAPSHOT, "items": [{**BRAIN_SNAPSHOT["items"][0], "source_url": "javascript:alert(1)"}]}
+        rendered = render_brain_explorer(snapshot)
 
-        with patch("src.web.dashboard.get_brain_graph_data", return_value=graph):
-            response = client.get("/brain")
-
-        self.assertNotIn('href="javascript:alert(1)"', response.text)
-        self.assertIn("javascript:alert(1)", response.text)
+        self.assertNotIn('href="javascript:alert(1)"', rendered)
+        self.assertIn("javascript:alert(1)", rendered)
 
     def test_brain_page_returns_unavailable_when_database_fails(self):
         client = self.authenticated_client()
 
         with patch(
-            "src.web.dashboard.get_brain_graph_data",
+            "src.web.dashboard.get_brain_snapshot",
             side_effect=sqlite3.OperationalError,
         ):
             response = client.get("/brain")
@@ -145,13 +165,71 @@ class WebTests(unittest.TestCase):
         client = self.authenticated_client()
 
         with patch(
-            "src.web.dashboard.get_brain_graph_data",
+            "src.web.dashboard.get_brain_snapshot",
             side_effect=sqlite3.OperationalError,
         ):
             response = client.get("/brain-data")
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json(), {"status": "unavailable"})
+
+    def test_archive_updates_active_brain_snapshot(self):
+        client = self.authenticated_client()
+
+        with patch("src.web.dashboard.archive_brain_item", return_value=True):
+            response = client.post("/brain/items/7/archive")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True, "id": 7, "action": "archived"})
+
+    def test_archive_returns_not_found_for_missing_item(self):
+        client = self.authenticated_client()
+
+        with patch("src.web.dashboard.archive_brain_item", return_value=False):
+            response = client.post("/brain/items/7/archive")
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_archive_returns_unavailable_when_database_fails(self):
+        client = self.authenticated_client()
+
+        with patch(
+            "src.web.dashboard.archive_brain_item",
+            side_effect=sqlite3.OperationalError,
+        ):
+            response = client.post("/brain/items/7/archive")
+
+        self.assertEqual(response.status_code, 503)
+
+    def test_delete_requires_named_confirmation(self):
+        client = self.authenticated_client()
+
+        response = client.post("/brain/items/7/delete", json={"confirmed": False})
+
+        self.assertEqual(response.status_code, 409)
+
+    def test_delete_requires_the_active_item_title_to_match(self):
+        client = self.authenticated_client()
+
+        with patch("src.web.dashboard.delete_brain_item", return_value=False):
+            response = client.post(
+                "/brain/items/7/delete",
+                json={"confirmed": True, "title": "Different title"},
+            )
+
+        self.assertEqual(response.status_code, 409)
+
+    def test_delete_removes_an_item_after_named_confirmation(self):
+        client = self.authenticated_client()
+
+        with patch("src.web.dashboard.delete_brain_item", return_value=True):
+            response = client.post(
+                "/brain/items/7/delete",
+                json={"confirmed": True, "title": "Focus"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True, "id": 7, "action": "deleted"})
 
     def test_dashboard_renders_readable_database_fields_instead_of_raw_data_dictionaries(self):
         snapshot = {

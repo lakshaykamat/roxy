@@ -3,28 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Brain map · Roxy</title>
+  <title>Brain explorer · Roxy</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="min-h-screen bg-slate-50 text-slate-800">
-  <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-    <a class="text-sm font-medium text-violet-700 underline" href="/">← Dashboard</a>
-    <header class="mt-5">
-      <p class="text-sm font-semibold tracking-wide text-violet-700">ROXY</p>
-      <h1 class="mt-1 text-3xl font-bold tracking-tight">Thought map</h1>
-      <p class="mt-2 max-w-2xl text-slate-600">Active saved items connect when they share a tag. Circle colour shows item type; larger circles have more connections.</p>
-    </header>
-    <section class="mt-7 overflow-x-auto rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-labelledby="map-title">
-      <h2 id="map-title" class="sr-only">Brain item relationship map</h2>
-      <svg class="min-w-[900px]" width="900" height="620" viewBox="0 0 900 620" role="img" aria-label="Thought map showing saved items and their shared-tag relationships">
-        {{edges}}
-        {{nodes}}
-      </svg>
-    </section>
-    <section class="mt-8 rounded-xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="item-list-title">
-      <h2 id="item-list-title" class="text-xl font-bold">Saved items</h2>
-      <ul class="mt-3">{{details}}</ul>
-    </section>
+<body class="min-h-screen bg-paper font-mono text-sm text-ink antialiased">
+  <a class="sr-only left-4 top-4 z-50 border-2 border-ink bg-panel px-3 py-2 focus:not-sr-only focus:fixed focus:outline-none" href="#main-content">Skip to Brain content</a>
+  <header class="border-b-2 border-ink bg-panel"><div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6"><a class="flex items-center gap-3" href="/" aria-label="Roxy dashboard"><span class="grid h-8 w-8 place-items-center border-2 border-ink bg-accent font-bold text-panel">R</span><span><span class="block font-bold tracking-[0.18em]">ROXY</span><span class="block text-xs">PRIVATE ASSISTANT / BRAIN EXPLORER</span></span></a><form method="post" action="/logout"><button class="border-2 border-ink bg-panel px-3 py-1.5 text-xs font-bold hover:bg-ink hover:text-panel" type="submit">SIGN OUT</button></form></div></header>
+  <main id="main-content" class="mx-auto max-w-6xl px-4 py-7 sm:px-6"><div class="border-b-2 border-ink pb-5"><p class="text-xs font-bold tracking-[0.16em] text-accent">BRAIN / 02</p><h1 class="mt-2 text-2xl font-bold">Connected records</h1><p class="mt-2 max-w-2xl text-xs leading-5">Browse explicit captures, inspect evidence-backed relationships, and safely archive or delete active items.</p></div>
+    <p id="brain-status" class="mt-4 min-h-5 text-xs" aria-live="polite"></p>
+    <div class="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"><section class="border-2 border-ink bg-panel" aria-labelledby="timeline-title"><h2 id="timeline-title" class="border-b-2 border-ink bg-ink px-3 py-2 text-xs font-bold text-panel">TIMELINE</h2><ul>{{timeline}}</ul></section><section class="border-2 border-ink bg-panel" aria-labelledby="connections-title"><h2 id="connections-title" class="border-b-2 border-ink bg-ink px-3 py-2 text-xs font-bold text-panel">CONNECTIONS</h2><div class="brain-grid">{{connections}}</div><p class="border-t border-line px-3 py-2 text-xs">Nodes are grouped by their first active tag or type and capture date. Select one to inspect direct, explained connections.</p></section></div>
+    <div class="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"><section class="border-2 border-ink bg-panel" aria-labelledby="items-title"><div class="border-b-2 border-ink bg-ink px-3 py-2"><h2 id="items-title" class="text-xs font-bold text-panel">SAVED_ITEMS</h2><label class="sr-only" for="brain-filter">Filter saved items</label><input id="brain-filter" class="mt-2 w-full border border-line bg-panel px-2 py-1 text-ink" type="search" placeholder="Filter saved items"></div><ul>{{items}}</ul></section><section class="border-2 border-ink bg-panel p-4" aria-labelledby="details-title"><h2 id="details-title" class="text-xs font-bold">ITEM_DETAILS</h2><div class="mt-4">{{details}}</div></section></div>
   </main>
+  <dialog id="delete-dialog" class="border-2 border-ink bg-panel p-5 text-ink"><form method="dialog"><p class="font-bold">Permanently delete this item?</p><p id="delete-description" class="mt-2 text-xs"></p><div class="mt-5 flex gap-2"><button id="delete-confirm" class="border-2 border-alert px-3 py-1 text-xs font-bold text-alert" value="confirm" type="submit">DELETE</button><button class="border-2 border-ink px-3 py-1 text-xs font-bold" value="cancel" type="submit">CANCEL</button></div></form></dialog>
+  <style>.brain-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:1rem; min-height:260px; padding:1rem; background:linear-gradient(#8b958822 1px, transparent 1px),linear-gradient(90deg,#8b958822 1px,transparent 1px); background-size:24px 24px; } .brain-group { border:1px dashed #8b9588; padding:.6rem; } .brain-node { min-height:100px; width:100%; border:2px solid #18231b; background:#f9faf6; padding:.75rem; text-align:left; } .brain-node span,.brain-node small { display:block; } .brain-node small { margin-top:.5rem; font-size:.7rem; } @media (max-width: 1023px) { .brain-grid { min-height:180px; } }</style>
+  <script>const status=document.querySelector('#brain-status'), dialog=document.querySelector('#delete-dialog'); let pendingDelete=null; document.querySelector('#brain-filter').addEventListener('input',(event)=>{const query=event.target.value.toLowerCase(); document.querySelectorAll('[data-brain-item]').forEach((item)=>{item.hidden=!item.dataset.search.toLowerCase().includes(query);});}); document.querySelectorAll('[data-select-item]').forEach((button)=>button.addEventListener('click',()=>{const id=button.dataset.selectItem; document.querySelectorAll('[data-item-detail]').forEach((detail)=>{detail.hidden=detail.dataset.itemId!==id;});})); async function action(url, options={}) { const response=await fetch(url,{credentials:'same-origin',...options}); if (response.status===409) { status.textContent='Confirmation did not match the active item.'; return; } if (response.status===404) { status.textContent='That item is no longer active.'; return; } if (response.status===503) { status.textContent='Brain data is temporarily unavailable.'; return; } if (!response.ok) { status.textContent='The requested change could not be completed.'; return; } window.location.reload(); } document.querySelectorAll('[data-archive-item]').forEach((button)=>button.addEventListener('click',()=>action(`/brain/items/${button.dataset.archiveItem}/archive`,{method:'POST'}))); document.querySelectorAll('[data-delete-item]').forEach((button)=>button.addEventListener('click',()=>{pendingDelete=button; document.querySelector('#delete-description').textContent=`Type-free confirmation: delete “${button.dataset.deleteTitle}” permanently.`; dialog.showModal();})); dialog.addEventListener('close',()=>{if (dialog.returnValue==='confirm' && pendingDelete) { action(`/brain/items/${pendingDelete.dataset.deleteItem}/delete`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({confirmed:true,title:pendingDelete.dataset.deleteTitle})}); } pendingDelete=null;}); document.querySelectorAll('.js-local-time').forEach((element)=>{const date=new Date(element.dateTime); if (!Number.isNaN(date.valueOf())) element.textContent=new Intl.DateTimeFormat(navigator.language,{dateStyle:'medium',timeStyle:'short'}).format(date);});</script>
 </body>
 </html>

@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 from src import config
@@ -219,69 +220,87 @@ def render_template(template_name: str, values: dict[str, str]) -> str:
     return template
 
 
-def render_brain_map(graph: dict[str, list[dict[str, object]]]) -> str:
-    nodes = graph["nodes"]
-    edges = graph["edges"]
-    colors = {
-        "idea": "#6750a4", "fact": "#2563eb", "preference": "#db2777",
-        "person": "#ea580c", "project": "#0f766e", "goal": "#16a34a",
-        "decision": "#ca8a04", "task": "#dc2626", "reference": "#4f46e5",
-        "reflection": "#7c3aed",
-    }
-    columns = min(5, max(1, len(nodes)))
-    rows = max(1, (len(nodes) + columns - 1) // columns)
-    positions = {
-        node["id"]: (
-            (index % columns + 1) * 900 // (columns + 1),
-            (index // columns + 1) * 620 // (rows + 1),
-        )
-        for index, node in enumerate(nodes)
-    }
-    shared_tag_counts = {
-        node["id"]: sum(
-            len(edge["tags"])
-            for edge in edges
-            if node["id"] in (edge["source"], edge["target"])
-        )
-        for node in nodes
-    }
+def render_brain_explorer(snapshot: dict[str, object]) -> str:
+    timeline = snapshot["timeline"]
+    items = snapshot["items"]
 
     def text(value: object) -> str:
-        return html.escape(str(value))
+        return html.escape(str(value if value is not None else "Not recorded"))
+
+    def timestamp(value: object) -> str:
+        if value is None:
+            return '<span class="text-slate-500">Not recorded</span>'
+        escaped_value = text(value)
+        return f'<time class="js-local-time" datetime="{escaped_value}">{escaped_value}</time>'
 
     def source_url_markup(value: object) -> str:
         url = str(value)
         parsed_url = urlparse(url)
         if parsed_url.scheme in {"http", "https"} and parsed_url.netloc:
-            return f'<a class="mt-2 inline-block text-sm text-violet underline" href="{text(url)}">{text(url)}</a>'
-        return f'<p class="mt-2 break-all text-sm text-slate-600">{text(url)}</p>'
+            return f'<a class="break-all text-accent underline" href="{text(url)}" rel="noreferrer">{text(url)}</a>'
+        return f'<p class="break-all">{text(url)}</p>'
 
-    edge_markup = "".join(
-        f'<line x1="{positions[edge["source"]][0]}" y1="{positions[edge["source"]][1]}" '
-        f'x2="{positions[edge["target"]][0]}" y2="{positions[edge["target"]][1]}" '
-        'stroke="#94a3b8" stroke-width="2" />'
-        for edge in edges
-    )
-    node_markup = "".join(
-        f'<g><circle cx="{positions[node["id"]][0]}" cy="{positions[node["id"]][1]}" '
-        f'r="{18 + min(shared_tag_counts[node["id"]], 4) * 3}" fill="{colors.get(str(node["item_type"]), "#475569")}" />'
-        f'<text x="{positions[node["id"]][0]}" y="{positions[node["id"]][1] + 42}" text-anchor="middle" '
-        'font-size="13" fill="#172033">'
-        f'{text(str(node["title"])[:24])}</text></g>'
-        for node in nodes
-    )
-    detail_markup = "".join(
-        '<li class="border-b border-slate-200 py-4 last:border-0">'
-        f'<h2 class="font-semibold text-slate-900">{text(node["title"])}</h2>'
-        f'<p class="mt-1 text-sm text-slate-600">{text(node["summary"])}</p>'
-        f'<p class="mt-2 text-xs font-medium uppercase tracking-wide text-slate-500">{text(node["item_type"])} · {text(", ".join(node["tags"]) or "untagged")}</p>'
-        + (source_url_markup(node["source_url"]) if node["source_url"] else "")
-        + '</li>'
-        for node in nodes
-    ) or '<li class="py-4 text-sm text-slate-600">No active brain items yet.</li>'
+    timeline_markup = "".join(
+        '<li class="border-b border-line px-3 py-3 last:border-0">'
+        f'<p class="font-bold">{text(capture["request"])}</p>'
+        f'<p class="mt-1 text-xs">{timestamp(capture["captured_at"])}</p>'
+        f'<p class="mt-2 text-xs leading-5">{text(capture["analysis"])}</p>'
+        '</li>'
+        for capture in timeline
+    ) or '<li class="px-3 py-4 text-xs">(none recorded)</li>'
+    item_markup = "".join(
+        '<li class="border-b border-line px-3 py-3 last:border-0" data-brain-item '
+        f'data-item-id="{text(item["id"])}" data-search="{text(item["title"])} {text(item["summary"])} {text(" ".join(item["tags"]))}">'
+        f'<button class="w-full text-left focus:outline-none focus:ring-2 focus:ring-accent" data-select-item="{text(item["id"])}" type="button">'
+        f'<span class="block font-bold">{text(item["title"])}</span><span class="mt-1 block text-xs">{text(item["item_type"])} · {text(", ".join(item["tags"]) or "untagged")}</span></button>'
+        '</li>'
+        for item in items
+    ) or '<li class="px-3 py-4 text-xs">(none recorded)</li>'
+    grouped_items: dict[str, list[dict[str, object]]] = {}
+    for item in items:
+        theme = item["tags"][0] if item["tags"] else item["item_type"]
+        date = str(item["captured_at"])[:10]
+        grouped_items.setdefault(f"{theme} / {date}", []).append(item)
+    connection_markup = "".join(
+        '<section class="brain-group"><p class="mb-2 text-xs font-bold">'
+        + text(label.upper())
+        + '</p><div class="grid gap-3">'
+        + "".join(
+            '<button class="brain-node focus:outline-none focus:ring-2 focus:ring-accent" '
+            f'data-select-item="{text(item["id"])}" type="button"><span>{text(item["title"])}</span><small>'
+            + " · ".join(
+                f'{text(relation["relation_type"])} → {text(relation["related_item_title"])}'
+                for relation in item["relations"]
+            )
+            + '</small></button>'
+            for item in group
+        )
+        + '</div></section>'
+        for label, group in grouped_items.items()
+    ) or '<p class="p-3 text-xs">No active records to explore.</p>'
+    details_markup = "".join(
+        '<article class="brain-detail" data-item-detail '
+        f'data-item-id="{text(item["id"])}" {"hidden" if index else ""}>'
+        f'<h3 class="text-lg font-bold">{text(item["title"])}</h3><p class="mt-2 text-xs leading-5">{text(item["summary"])}</p>'
+        f'<p class="mt-3 text-xs">SAVED: {timestamp(item["captured_at"])} · STATE: {text(item["source_state"])}</p>'
+        + (f'<p class="mt-2 text-xs">SOURCE: {source_url_markup(item["source_url"])}</p>' if item["source_url"] else "")
+        + '<div class="mt-4"><p class="font-bold text-xs">CONNECTIONS</p><ul class="mt-2 space-y-2 text-xs">'
+        + "".join(
+            f'<li><span class="font-bold">{text(relation["relation_type"])}</span> → {text(relation["related_item_title"])}: {text(relation["explanation"])}</li>'
+            for relation in item["relations"]
+        )
+        + '</ul></div><div class="mt-5 flex gap-2"><button class="border-2 border-ink px-3 py-1 text-xs font-bold hover:bg-ink hover:text-panel" data-archive-item="'
+        + text(item["id"])
+        + '" type="button">ARCHIVE</button><button class="border-2 border-alert px-3 py-1 text-xs font-bold text-alert hover:bg-alert hover:text-panel" data-delete-item="'
+        + text(item["id"])
+        + '" data-delete-title="'
+        + text(item["title"])
+        + '" type="button">DELETE</button></div></article>'
+        for index, item in enumerate(items)
+    ) or '<p class="text-xs">Select a saved item to inspect it.</p>'
     return render_template(
         "brain.html",
-        {"edges": edge_markup, "nodes": node_markup, "details": detail_markup},
+        {"timeline": timeline_markup, "items": item_markup, "connections": connection_markup, "details": details_markup},
     )
 
 
@@ -297,13 +316,13 @@ def load_snapshot() -> dict[str, object] | None:
     )
 
 
-def load_brain_graph() -> dict[str, list[dict[str, object]]] | None:
+def load_brain_snapshot() -> dict[str, object] | None:
     def unavailable(_: BaseException) -> None:
-        logger.exception("Unable to load brain graph")
+        logger.exception("Unable to load Brain explorer snapshot")
         return None
 
     return try_catch(
-        dashboard.get_brain_graph_data,
+        dashboard.get_brain_snapshot,
         handle_error=unavailable,
         exception_types=sqlite3.Error,
     )
@@ -333,20 +352,61 @@ async def dashboard_data(request: Request):
 async def brain_page(request: Request):
     if redirect := dashboard_redirect(request):
         return redirect
-    graph = load_brain_graph()
-    if graph is None:
+    snapshot = load_brain_snapshot()
+    if snapshot is None:
         return HTMLResponse(render_template("unavailable.html", {}), status_code=503)
-    return HTMLResponse(render_brain_map(graph))
+    return HTMLResponse(render_brain_explorer(snapshot))
 
 
 @app.get("/brain-data")
 async def brain_data(request: Request):
     if redirect := dashboard_redirect(request):
         return redirect
-    graph = load_brain_graph()
-    if graph is None:
+    snapshot = load_brain_snapshot()
+    if snapshot is None:
         return JSONResponse({"status": "unavailable"}, status_code=503)
-    return JSONResponse(graph)
+    return JSONResponse(snapshot)
+
+
+class DeleteRequest(BaseModel):
+    confirmed: bool = False
+    title: str = ""
+
+
+def run_brain_action(operation: object) -> bool | None:
+    return try_catch(
+        operation,
+        handle_error=lambda _: None,
+        exception_types=sqlite3.Error,
+    )
+
+
+@app.post("/brain/items/{item_id}/archive")
+async def archive_brain_item(item_id: int, request: Request):
+    if redirect := dashboard_redirect(request):
+        return redirect
+    archived = run_brain_action(lambda: dashboard.archive_brain_item(item_id))
+    if archived is None:
+        return JSONResponse({"error": "Brain data is unavailable."}, status_code=503)
+    if not archived:
+        return JSONResponse({"error": "Brain item not found."}, status_code=404)
+    return {"ok": True, "id": item_id, "action": "archived"}
+
+
+@app.post("/brain/items/{item_id}/delete")
+async def delete_brain_item(item_id: int, payload: DeleteRequest, request: Request):
+    if redirect := dashboard_redirect(request):
+        return redirect
+    if not payload.confirmed or not payload.title.strip():
+        return JSONResponse({"error": "Exact title confirmation is required."}, status_code=409)
+    deleted = run_brain_action(
+        lambda: dashboard.delete_brain_item(item_id, payload.title.strip())
+    )
+    if deleted is None:
+        return JSONResponse({"error": "Brain data is unavailable."}, status_code=503)
+    if not deleted:
+        return JSONResponse({"error": "Brain item was not found or the title did not match."}, status_code=409)
+    return {"ok": True, "id": item_id, "action": "deleted"}
 
 
 @app.post("/logout")

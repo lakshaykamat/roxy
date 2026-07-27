@@ -34,6 +34,50 @@ def get_brain_graph_data() -> dict[str, list[dict[str, object]]]:
     return brain_store.get_brain_graph()
 
 
+def _source_state(item: brain_store.BrainItem) -> str:
+    if item.source_url and item.item_type == "reference":
+        return "bookmark" if item.summary == "Saved link" else "analyzed"
+    return "saved"
+
+
+def get_brain_snapshot() -> dict[str, object]:
+    items = brain_store.list_recent_items(limit=100)
+    records: list[dict[str, object]] = []
+    for item in items:
+        context = brain_store.get_item_capture_context(item.id)
+        records.append(
+            {
+                "id": item.id,
+                "title": item.title,
+                "summary": item.summary,
+                "item_type": item.item_type,
+                "tags": item.tags,
+                "source_url": item.source_url,
+                "source_state": _source_state(item),
+                "captured_at": context["captured_at"] or item.created_at.isoformat(),
+                "source_published_at": (
+                    item.source_published_at.isoformat()
+                    if item.source_published_at
+                    else None
+                ),
+                "capture_summary": context["summary"],
+                "relations": context["relations"],
+            }
+        )
+    return {"timeline": brain_store.list_capture_timeline(limit=50), "items": records}
+
+
+def archive_brain_item(item_id: int) -> bool:
+    return brain_store.archive_item(item_id)
+
+
+def delete_brain_item(item_id: int, title: str) -> bool:
+    item = brain_store.get_item(item_id)
+    if item is None or item.status != "active" or item.title != title:
+        return False
+    return brain_store.delete_item(item_id)
+
+
 def get_dashboard_snapshot(now: datetime | None = None) -> dict[str, object]:
     current_time = (now or utc_now()).astimezone(timezone.utc)
     cutoff = format_timestamp(current_time - timedelta(days=1))
