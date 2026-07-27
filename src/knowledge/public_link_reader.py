@@ -1,4 +1,5 @@
 import ipaddress
+import logging
 import socket
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -9,9 +10,11 @@ import httpx
 
 from src import config
 from src.core.errors import try_async, try_catch
+from src.core.web import fetch_web_response
 
 
 CaptureStatus = Literal["analyzed", "manual_description", "bookmark"]
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -103,20 +106,12 @@ def resolve_public_host(url: str) -> bool:
 
 
 async def fetch(url: str) -> httpx.Response:
-    timeout = httpx.Timeout(config.PUBLIC_SOURCE_TIMEOUT_SECONDS)
-    async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
-        async with client.stream("GET", url, headers={"User-Agent": "Roxy/1.0"}) as response:
-            body = bytearray()
-            async for chunk in response.aiter_bytes():
-                body.extend(chunk)
-                if len(body) > config.PUBLIC_SOURCE_MAX_BYTES:
-                    raise ValueError("The source is larger than 1 MiB.")
-            return httpx.Response(
-                response.status_code,
-                headers=response.headers,
-                content=bytes(body),
-                request=response.request,
-            )
+    return await fetch_web_response(
+        url,
+        timeout_seconds=config.PUBLIC_SOURCE_TIMEOUT_SECONDS,
+        max_bytes=config.PUBLIC_SOURCE_MAX_BYTES,
+        headers={"User-Agent": "Roxy/1.0"},
+    )
 
 
 def _bookmark(url: str) -> CapturedSource:
@@ -135,17 +130,21 @@ async def read_public_link(url: str) -> CapturedSource:
                 current_url = normalize_public_url(urljoin(current_url, location))
                 continue
             if response.status_code >= 400:
+                logger.warning("Public link returned HTTP %s: %s", response.status_code, current_url)
                 return CapturedSource(current_url, None, None, None, "manual_description")
             if "html" not in response.headers.get("content-type", "").lower():
+                logger.warning("Public link did not return HTML: %s", current_url)
                 return CapturedSource(current_url, None, None, None, "manual_description")
             parser = SourceParser()
             parser.feed(response.text)
             title, text, published_at = parser.extracted()
             status: CaptureStatus = "analyzed" if title or text else "manual_description"
             return CapturedSource(current_url, title, text, published_at, status)
+        logger.warning("Public link exceeded redirect limit: %s", current_url)
         return CapturedSource(current_url, None, None, None, "manual_description")
 
-    async def unavailable(_: BaseException) -> CapturedSource:
+    async def unavailable(error: BaseException) -> CapturedSource:
+        logger.warning("Unable to read public link %s: %s", url, error)
         return CapturedSource(url, None, None, None, "manual_description")
 
     return await try_async(capture, handle_error=unavailable)
