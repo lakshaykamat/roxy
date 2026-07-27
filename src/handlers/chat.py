@@ -223,7 +223,6 @@ debounce_coordinator = DebounceCoordinator(config.CHAT_DEBOUNCE_SECONDS, process
 
 async def run_agent_loop(messages: list[object], *, capture_key: str | None = None) -> str:
     tools, tool_choice = await select_agent_tools(messages)
-    source_content = latest_user_text(messages)
     saved_titles: list[str] = []
     for _ in range(config.MAX_TOOL_CALL_ROUNDS):
         response = await ask_llm(messages, tools=tools, tool_choice=tool_choice)
@@ -240,7 +239,6 @@ async def run_agent_loop(messages: list[object], *, capture_key: str | None = No
                 tool_call.function.name,
                 tool_call.function.arguments,
                 capture_key=capture_key,
-                source_content=source_content,
             )
             if inspect.isawaitable(result):
                 result = await result
@@ -270,22 +268,6 @@ def append_saved_item_notice(reply: str, saved_titles: list[str]) -> str:
     if not saved_titles:
         return reply
     return f"{reply}\n\nSaved to your brain: {saved_titles[-1]}."
-
-
-def latest_user_text(messages: list[object]) -> str:
-    for message in reversed(messages):
-        if not isinstance(message, dict) or message.get("role") != "user":
-            continue
-        content = message.get("content")
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            return " ".join(
-                part["text"]
-                for part in content
-                if isinstance(part, dict) and isinstance(part.get("text"), str)
-            )
-    return ""
 
 
 def brain_context(text: str) -> str:

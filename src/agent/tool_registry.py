@@ -72,12 +72,9 @@ if config.EXPENSE_TRACKER_ENABLED:
 
 def execute_tool_call(
     name: str, arguments: str, *, capture_key: str | None = None,
-    source_content: str | None = None,
 ) -> ToolResult | Awaitable[ToolResult]:
     if name == "save_brain_item":
-        return brain_tools.save_brain_item(
-            arguments, capture_key=capture_key, source_content=source_content
-        )
+        return brain_tools.save_brain_item(arguments, capture_key=capture_key)
     executor = TOOL_EXECUTORS.get(name)
     if executor is None:
         return {"ok": False, "error": "That action is not available."}

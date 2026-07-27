@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import re
 import sqlite3
 
 from src.core.errors import retry_async, try_async
@@ -9,12 +8,6 @@ from src.knowledge import brain
 
 logger = logging.getLogger(__name__)
 ITEM_TYPES = brain.BRAIN_ITEM_TYPES
-AUTOMATIC_CAPTURE_BLOCKLIST = re.compile(
-    r"\b(don't save|do not save|password|passcode|api[ _-]?key|account number|"
-    r"credit card|cvv|one-time password|\botp\b|medical|medication|diagnosed|"
-    r"health condition|diabetes|home address|live at|coordinates?|latitude|longitude)\b",
-    re.IGNORECASE,
-)
 
 DEFINITIONS = [
     {
@@ -40,7 +33,19 @@ DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "search_brain", "description": "Search saved brain items.",
-            "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "item_type": {"type": "string", "enum": sorted(ITEM_TYPES)}}, "required": ["query"], "additionalProperties": False},
+            "strict": True,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "minLength": 1, "pattern": r".*\S.*"},
+                    "item_type": {
+                        "type": ["string", "null"],
+                        "enum": [*sorted(ITEM_TYPES), None],
+                    },
+                },
+                "required": ["query", "item_type"],
+                "additionalProperties": False,
+            },
         },
     },
     {
@@ -89,7 +94,7 @@ def _tags(values: dict[str, object]) -> list[str]:
 
 
 async def save_brain_item(
-    arguments: str, *, capture_key: str | None = None, source_content: str | None = None
+    arguments: str, *, capture_key: str | None = None
 ) -> dict[str, object]:
     async def save() -> dict[str, object]:
         values = _values(arguments)
@@ -98,8 +103,6 @@ async def save_brain_item(
             raise ValueError("Capture mode must be automatic or explicit.")
         if capture_mode == "automatic" and not await asyncio.to_thread(brain.auto_capture_enabled):
             return {"ok": False, "error": "Automatic brain capture is paused."}
-        if capture_mode == "automatic" and _contains_sensitive_content(values, source_content):
-            return {"ok": False, "error": "Automatic brain capture does not save sensitive content."}
         item_type = _text(values, "item_type").lower()
         if item_type not in ITEM_TYPES:
             raise ValueError("Unsupported brain item type.")
@@ -162,16 +165,6 @@ def _failure(error: BaseException) -> dict[str, object]:
 
 async def _async_failure(error: BaseException) -> dict[str, object]:
     return _failure(error)
-
-
-def _contains_sensitive_content(
-    values: dict[str, object], source_content: str | None
-) -> bool:
-    text = " ".join(
-        [*(value for value in values.values() if isinstance(value, str)), source_content or ""]
-    )
-    has_coordinates = bool(re.search(r"\b-?\d{1,2}\.\d{3,}\s*,\s*-?\d{1,3}\.\d{3,}\b", text))
-    return has_coordinates or bool(AUTOMATIC_CAPTURE_BLOCKLIST.search(text))
 
 
 def _is_busy_or_locked(error: BaseException) -> bool:

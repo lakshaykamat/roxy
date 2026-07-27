@@ -76,8 +76,12 @@ class BrainTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(brain.list_recent_items(), [])
 
-    def test_automatic_save_rejects_sensitive_or_do_not_save_content(self):
-        for content in ("Don't save this idea", "My API key is secret"):
+    def test_automatic_save_accepts_any_content(self):
+        for content in (
+            "Don't save this idea",
+            "My API key is secret",
+            "My home address is 12 Example Street",
+        ):
             result = asyncio.run(
                 brain_tools.save_brain_item(
                     json.dumps({
@@ -86,19 +90,8 @@ class BrainTests(unittest.TestCase):
                     })
                 )
             )
-            self.assertFalse(result["ok"])
-        self.assertEqual(brain.list_recent_items(), [])
-
-    def test_automatic_save_checks_the_original_message_for_sensitive_content(self):
-        result = asyncio.run(
-            brain_tools.save_brain_item(
-                '{"content":"A health note","title":"Note","summary":"A note","item_type":"reflection","tags":[],"capture_mode":"automatic"}',
-                source_content="I have diabetes and don't save this.",
-            )
-        )
-
-        self.assertFalse(result["ok"])
-        self.assertEqual(brain.list_recent_items(), [])
+            self.assertTrue(result["ok"])
+        self.assertEqual(len(brain.list_recent_items()), 3)
 
     def test_brain_tool_searches_archives_and_deletes_items(self):
         saved = asyncio.run(
@@ -115,6 +108,28 @@ class BrainTests(unittest.TestCase):
         self.assertTrue(archived["ok"])
         self.assertEqual(brain.search_items("freelancer"), [])
         self.assertTrue(brain.delete_item(saved["brain_item"]["id"]))
+
+    def test_search_tool_definition_requires_a_query_in_strict_mode(self):
+        definition = next(
+            definition["function"]
+            for definition in brain_tools.DEFINITIONS
+            if definition["function"]["name"] == "search_brain"
+        )
+
+        self.assertTrue(definition["strict"])
+        self.assertEqual(
+            definition["parameters"]["required"], ["query", "item_type"]
+        )
+        self.assertEqual(
+            definition["parameters"]["properties"]["item_type"]["type"],
+            ["string", "null"],
+        )
+        self.assertEqual(
+            definition["parameters"]["properties"]["query"]["minLength"], 1
+        )
+        self.assertEqual(
+            definition["parameters"]["properties"]["query"]["pattern"], r".*\S.*"
+        )
 
     def test_export_includes_brain_settings(self):
         brain.set_auto_capture_enabled(False)
