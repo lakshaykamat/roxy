@@ -4,6 +4,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -13,6 +14,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from src import config
 from src.knowledge import brain_store, tools
+from src.knowledge.brain_analysis import BrainAnalysis
 from src.knowledge.capture_planner import CaptureItem, CapturePlan, CaptureRelation
 from src.reminders import repository as tasks
 
@@ -26,6 +28,95 @@ class BrainStoreTests(unittest.TestCase):
     def tearDown(self):
         config.DATABASE_PATH = self.original_path
         self.directory.cleanup()
+
+    def test_organization_selection_includes_only_recent_active_items_in_priority_order(self):
+        now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+        never_organized = brain_store.save_item(
+            "Never content", "Never", "Clear summary", "idea", [], "text", "explicit"
+        )
+        weak = brain_store.save_item("Weak", "Weak", "", "idea", [], "text", "explicit")
+        organized = brain_store.save_item(
+            "Organized", "Organized", "Clear summary", "idea", [], "text", "explicit"
+        )
+        old = brain_store.save_item("Old", "Old", "", "idea", [], "text", "explicit")
+        with brain_store._brain_database() as connection:
+            connection.execute(
+                "UPDATE brain_items SET last_organized_at = ? WHERE id = ?",
+                ((now - timedelta(days=2)).isoformat(), organized.id),
+            )
+            connection.execute(
+                "UPDATE brain_items SET created_at = ? WHERE id = ?",
+                ((now - timedelta(days=11)).isoformat(), old.id),
+            )
+
+        selected = brain_store.list_recent_items_for_organization(now, limit=20)
+
+        self.assertEqual(
+            [item.id for item in selected],
+            [never_organized.id, weak.id, organized.id],
+        )
+
+    def test_update_organized_metadata_preserves_content_and_task_fields(self):
+        due_at = datetime(2026, 8, 1, tzinfo=timezone.utc)
+        item = brain_store.save_item(
+            "Keep this exact content", "Old", "Old", "task", [], "text", "explicit",
+            due_at=due_at,
+            timezone_name="Asia/Kolkata",
+            recurrence_rule="daily",
+        )
+        analysis = BrainAnalysis(
+            "Clean title", "Clean factual summary.", "goal",
+            ["entity:roxy", "domain:planning"],
+        )
+
+        updated = brain_store.update_organized_metadata(
+            item.id, analysis, datetime(2026, 7, 28, tzinfo=timezone.utc)
+        )
+
+        self.assertEqual(updated.content, "Keep this exact content")
+        self.assertEqual(
+            (updated.title, updated.summary, updated.item_type, updated.tags),
+            ("Clean title", "Clean factual summary.", "task", ["entity:roxy", "domain:planning"]),
+        )
+        self.assertEqual(
+            (updated.due_at, updated.timezone, updated.recurrence_rule),
+            (due_at, "Asia/Kolkata", "daily"),
+        )
+        self.assertEqual(
+            updated.last_organized_at, datetime(2026, 7, 28, tzinfo=timezone.utc)
+        )
+
+        idea = brain_store.save_item("Idea", "Idea", "Idea", "idea", [], "text", "explicit")
+        retyped = brain_store.update_organized_metadata(
+            idea.id, analysis, datetime(2026, 7, 28, tzinfo=timezone.utc)
+        )
+        self.assertEqual(retyped.item_type, "goal")
+
+    def test_update_organized_metadata_returns_none_for_archived_item(self):
+        item = brain_store.save_item(
+            "Archived", "Archived", "Archived", "idea", [], "text", "explicit"
+        )
+        brain_store.archive_item(item.id)
+        analysis = BrainAnalysis("Updated", "Updated summary", "fact", [])
+
+        updated = brain_store.update_organized_metadata(
+            item.id, analysis, datetime(2026, 7, 28, tzinfo=timezone.utc)
+        )
+
+        self.assertIsNone(updated)
+
+    def test_renewed_organization_lock_stays_unavailable_to_another_run(self):
+        now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+        token = brain_store.acquire_brain_organization_lock(now)
+        self.assertIsNotNone(token)
+
+        self.assertTrue(
+            brain_store.renew_brain_organization_lock(token, now + timedelta(minutes=59))
+        )
+        competing_token = brain_store.acquire_brain_organization_lock(now + timedelta(hours=1))
+
+        self.assertIsNone(competing_token)
+        brain_store.release_brain_organization_lock(token)
 
     def test_brain_items_and_tasks_share_the_current_schema(self):
         brain_store.save_item(
@@ -59,6 +150,23 @@ class BrainStoreTests(unittest.TestCase):
                 preserved.execute("SELECT content FROM memories").fetchone()[0], "Likes tea"
             )
             self.assertEqual(brain_store.list_recent_items(), [])
+
+    def test_initialize_schema_adds_organization_timestamp_to_existing_brain_items(self):
+        saved = brain_store.save_item(
+            "Existing", "Existing", "Existing summary", "idea", [], "text", "explicit"
+        )
+        with brain_store._brain_database() as connection:
+            connection.execute("ALTER TABLE brain_items DROP COLUMN last_organized_at")
+
+        brain_store.initialize_schema()
+
+        with brain_store._brain_database() as connection:
+            columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(brain_items)")
+            }
+        restored = brain_store.get_item(saved.id)
+        self.assertIn("last_organized_at", columns)
+        self.assertEqual(restored.content, "Existing")
 
     def test_repeated_capture_key_creates_one_item(self):
         first = brain_store.save_item("Idea", "Idea", "An idea", "idea", [], "text", "automatic", capture_key="telegram:7:12:12")

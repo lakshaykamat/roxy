@@ -1,13 +1,17 @@
 import json
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Iterator, Literal
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Iterator, Literal
 
 from src.conversations.history import database_connection, format_timestamp
 from src.knowledge.capture_planner import Capture, CapturePlan
 from src.knowledge.constants import BRAIN_ITEM_TYPES, RELATION_TYPES
+
+if TYPE_CHECKING:
+    from src.knowledge.brain_analysis import BrainAnalysis
 
 
 @dataclass(frozen=True)
@@ -28,6 +32,7 @@ class BrainItem:
     recurrence_rule: str | None
     created_at: datetime
     updated_at: datetime
+    last_organized_at: datetime | None
     completed_at: datetime | None
 
 @dataclass(frozen=True)
@@ -61,8 +66,16 @@ def _create_brain_tables(connection: sqlite3.Connection) -> None:
         "source_type TEXT NOT NULL, source_url TEXT, source_published_at TEXT, capture_mode TEXT NOT NULL, "
         "capture_key TEXT UNIQUE, status TEXT NOT NULL, due_at TEXT, timezone TEXT, "
         "recurrence_rule TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
-        "last_recalled_at TEXT, completed_at TEXT)"
+        "last_recalled_at TEXT, last_organized_at TEXT, completed_at TEXT)"
     )
+
+
+def _add_missing_brain_item_columns(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(brain_items)")
+    }
+    if "last_organized_at" not in columns:
+        connection.execute("ALTER TABLE brain_items ADD COLUMN last_organized_at TEXT")
 
 
 def _create_capture_tables(connection: sqlite3.Connection) -> None:
@@ -94,6 +107,14 @@ def _create_reminder_table(connection: sqlite3.Connection) -> None:
         "scheduled_at TEXT NOT NULL, status TEXT NOT NULL, lease_expires_at TEXT, "
         "lease_token TEXT, attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT, "
         "delivered_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+
+
+def _create_organization_lock_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS brain_organization_lock ("
+        "id INTEGER PRIMARY KEY CHECK (id = 1), lock_token TEXT NOT NULL, "
+        "lease_expires_at TEXT NOT NULL)"
     )
 
 
@@ -154,8 +175,10 @@ def _initialize_settings(connection: sqlite3.Connection) -> None:
 
 def _initialize_schema(connection: sqlite3.Connection) -> None:
     _create_brain_tables(connection)
+    _add_missing_brain_item_columns(connection)
     _create_capture_tables(connection)
     _create_reminder_table(connection)
+    _create_organization_lock_table(connection)
     _create_indexes(connection)
     _create_search_index(connection)
     _initialize_settings(connection)
@@ -194,6 +217,10 @@ def brain_item_from_row(row: sqlite3.Row) -> BrainItem:
         recurrence_rule=row["recurrence_rule"],
         created_at=parse_timestamp(row["created_at"]),
         updated_at=parse_timestamp(row["updated_at"]),
+        last_organized_at=(
+            parse_timestamp(row["last_organized_at"])
+            if row["last_organized_at"] else None
+        ),
         completed_at=parse_timestamp(row["completed_at"]) if row["completed_at"] else None,
     )
 
@@ -419,6 +446,82 @@ def get_brain_graph() -> dict[str, list[dict[str, object]]]:
 
 def list_active_items(limit: int = 100) -> list[BrainItem]:
     return list_recent_items(limit)
+
+
+def list_recent_items_for_organization(
+    now: datetime, limit: int = 20
+) -> list[BrainItem]:
+    cutoff = format_timestamp(now.astimezone(timezone.utc) - timedelta(days=10))
+    with _brain_database() as connection:
+        rows = connection.execute(
+            "SELECT * FROM brain_items WHERE status = 'active' AND created_at >= ? "
+            "ORDER BY CASE "
+            "WHEN last_organized_at IS NULL AND summary <> '' AND summary <> title AND title <> content THEN 0 "
+            "WHEN last_organized_at IS NULL THEN 1 "
+            "WHEN summary = '' OR summary = title OR title = content THEN 2 ELSE 3 END, "
+            "last_organized_at ASC, created_at ASC, id ASC LIMIT ?",
+            (cutoff, limit),
+        ).fetchall()
+    return [brain_item_from_row(row) for row in rows]
+
+
+def update_organized_metadata(
+    item_id: int, analysis: "BrainAnalysis", organized_at: datetime
+) -> BrainItem | None:
+    with _brain_database() as connection:
+        cursor = connection.execute(
+            "UPDATE brain_items SET title = ?, summary = ?, item_type = CASE "
+            "WHEN item_type = 'task' THEN item_type ELSE ? END, tags_json = ?, "
+            "updated_at = ?, last_organized_at = ? WHERE id = ? AND status = 'active'",
+            (
+                analysis.title,
+                analysis.summary,
+                analysis.item_type,
+                json.dumps(analysis.tags),
+                format_timestamp(organized_at),
+                format_timestamp(organized_at),
+                item_id,
+            ),
+        )
+        if cursor.rowcount == 0:
+            return None
+        row = connection.execute(
+            "SELECT * FROM brain_items WHERE id = ? AND status = 'active'", (item_id,)
+        ).fetchone()
+    return brain_item_from_row(row) if row else None
+
+
+def acquire_brain_organization_lock(now: datetime) -> str | None:
+    token = str(uuid.uuid4())
+    lease_expires_at = format_timestamp(now.astimezone(timezone.utc) + timedelta(hours=1))
+    current_time = format_timestamp(now)
+    with _brain_database() as connection:
+        cursor = connection.execute(
+            "INSERT INTO brain_organization_lock (id, lock_token, lease_expires_at) "
+            "VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET lock_token = excluded.lock_token, "
+            "lease_expires_at = excluded.lease_expires_at "
+            "WHERE brain_organization_lock.lease_expires_at <= ?",
+            (token, lease_expires_at, current_time),
+        )
+    return token if cursor.rowcount == 1 else None
+
+
+def release_brain_organization_lock(token: str) -> None:
+    with _brain_database() as connection:
+        connection.execute(
+            "DELETE FROM brain_organization_lock WHERE id = 1 AND lock_token = ?", (token,)
+        )
+
+
+def renew_brain_organization_lock(token: str, now: datetime) -> bool:
+    lease_expires_at = format_timestamp(now.astimezone(timezone.utc) + timedelta(hours=1))
+    with _brain_database() as connection:
+        cursor = connection.execute(
+            "UPDATE brain_organization_lock SET lease_expires_at = ? "
+            "WHERE id = 1 AND lock_token = ?",
+            (lease_expires_at, token),
+        )
+    return cursor.rowcount == 1
 
 
 def list_unconnected_active_items() -> list[BrainItem]:

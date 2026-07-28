@@ -1,7 +1,7 @@
 import os
 import sqlite3
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("ALLOWED_USER_ID", "1")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
@@ -101,12 +101,37 @@ class WebTests(unittest.TestCase):
     def test_login_creates_session_and_allows_dashboard(self):
         client = self.authenticated_client()
         with patch("src.web.dashboard.get_dashboard_snapshot", return_value=SAFE_SNAPSHOT):
-            self.assertEqual(client.get("/").status_code, 200)
+            response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('id="run-brain-organization"', response.text)
+        self.assertIn('id="organization-status"', response.text)
 
     def test_dashboard_data_returns_snapshot_for_session(self):
         client = self.authenticated_client()
         with patch("src.web.dashboard.get_dashboard_snapshot", return_value=SAFE_SNAPSHOT):
             self.assertEqual(client.get("/dashboard-data").json(), SAFE_SNAPSHOT)
+
+    def test_dashboard_can_start_brain_organization_in_the_background(self):
+        client = self.authenticated_client()
+
+        with patch(
+            "src.web.refresh_brain_connections", new=AsyncMock(return_value=3)
+        ) as refresh:
+            response = client.post("/brain/organization")
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json(), {"status": "started"})
+        refresh.assert_awaited_once()
+
+    def test_dashboard_rejects_a_duplicate_brain_organization_request(self):
+        client = self.authenticated_client()
+
+        with patch("src.web.start_manual_brain_organization", return_value=False):
+            response = client.post("/brain/organization")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json(), {"error": "Brain organization is already running."})
 
     def test_brain_page_requires_login(self):
         response = TestClient(app).get("/brain", follow_redirects=False)

@@ -95,7 +95,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(processed)
 
     async def test_run_introspection_if_due_runs_once_after_three_am(self):
-        at_three_am = datetime(2026, 7, 27, 3, 0, tzinfo=timezone.utc)
+        at_three_am = datetime(2026, 7, 27, 21, 30, tzinfo=timezone.utc)
         with patch("src.reminders.worker.refresh_brain_connections", new=AsyncMock(return_value=0)) as refresh:
             self.assertTrue(await self.worker.run_introspection_if_due(at_three_am))
             self.assertFalse(await self.worker.run_introspection_if_due(at_three_am))
