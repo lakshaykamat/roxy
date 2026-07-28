@@ -3,22 +3,25 @@ import logging
 import math
 import secrets
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 from src import config
 from src.dashboard import service as dashboard
-from src.core.errors import try_catch
+from src.core.errors import try_async, try_catch
 from src.conversations.history import database_connection
+from src.knowledge.introspection import refresh_brain_connections
 
 logger = logging.getLogger(__name__)
 TEMPLATE_DIRECTORY = Path(__file__).with_name("templates")
+manual_brain_organization_running = False
 app = FastAPI()
 app.add_middleware(
     SessionMiddleware,
@@ -210,6 +213,7 @@ def render_dashboard(snapshot: dict[str, object]) -> str:
             "configuration": configuration_rows(configuration),
             "notices": notices,
             "generated_at": timestamp(snapshot["generated_at"]),
+            "organization_status": "No Brain organization is running.",
         },
     )
 
@@ -381,6 +385,26 @@ def load_brain_snapshot() -> dict[str, object] | None:
     )
 
 
+async def run_manual_brain_organization() -> None:
+    async def organize() -> None:
+        await refresh_brain_connections(datetime.now(timezone.utc))
+
+    async def mark_finished() -> None:
+        global manual_brain_organization_running
+        manual_brain_organization_running = False
+
+    await try_async(organize, finally_handler=mark_finished)
+
+
+def start_manual_brain_organization(background_tasks: BackgroundTasks) -> bool:
+    global manual_brain_organization_running
+    if manual_brain_organization_running:
+        return False
+    manual_brain_organization_running = True
+    background_tasks.add_task(run_manual_brain_organization)
+    return True
+
+
 @app.get("/")
 async def dashboard_page(request: Request):
     if redirect := dashboard_redirect(request):
@@ -399,6 +423,26 @@ async def dashboard_data(request: Request):
     if snapshot is None:
         return JSONResponse({"status": "unavailable"}, status_code=503)
     return JSONResponse(snapshot)
+
+
+@app.post("/brain/organization")
+async def organize_brain(request: Request, background_tasks: BackgroundTasks):
+    if redirect := dashboard_redirect(request):
+        return redirect
+    if not start_manual_brain_organization(background_tasks):
+        return JSONResponse(
+            {"error": "Brain organization is already running."}, status_code=409
+        )
+    return JSONResponse({"status": "started"}, status_code=202)
+
+
+@app.get("/brain/organization-status")
+async def brain_organization_status(request: Request):
+    if redirect := dashboard_redirect(request):
+        return redirect
+    if manual_brain_organization_running:
+        return {"status": "running", "message": "Brain organization is running."}
+    return {"status": "idle", "message": "No Brain organization is running."}
 
 
 @app.get("/brain")
@@ -468,4 +512,3 @@ async def delete_brain_item(item_id: int, payload: DeleteRequest, request: Reque
 async def logout(request: Request) -> RedirectResponse:
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
-
