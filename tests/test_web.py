@@ -136,16 +136,19 @@ class WebTests(unittest.TestCase):
             response = client.get("/brain")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("TIMELINE", response.text)
+        self.assertIn("RECENT_CAPTURES", response.text)
+        self.assertIn("KNOWLEDGE_MAP", response.text)
+        self.assertIn("RELATIONSHIP_LEDGER", response.text)
         self.assertIn("CONNECTIONS", response.text)
         self.assertIn("SAVED_ITEMS", response.text)
         self.assertIn("Focus note", response.text)
         self.assertIn("Focus supports the project plan.", response.text)
-        self.assertIn("ORIGIN: direct", response.text)
-        self.assertIn("CONFIDENCE: 90%", response.text)
+        self.assertIn("supports · direct · 90%", response.text)
         self.assertIn('datetime="2026-07-25T12:00:00+00:00"', response.text)
         self.assertIn('href="https://example.com/focus"', response.text)
         self.assertIn('data-delete-title="Focus"', response.text)
+        self.assertIn('data-relation-source="7"', response.text)
+        self.assertIn('data-relation-target="8"', response.text)
 
     def test_brain_page_only_shows_stored_relation_labels(self):
         snapshot = {
@@ -161,7 +164,7 @@ class WebTests(unittest.TestCase):
 
         rendered = render_brain_explorer(snapshot)
 
-        self.assertIn("supports → Plan", rendered)
+        self.assertIn("supports · direct", rendered)
         self.assertNotIn("DOMAIN:WORK / 2026-07-25", rendered)
         self.assertNotIn("capture date", rendered)
 

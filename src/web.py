@@ -248,42 +248,75 @@ def render_brain_explorer(snapshot: dict[str, object]) -> str:
         '</li>'
         for capture in timeline
     ) or '<li class="px-3 py-4 text-xs">(none recorded)</li>'
+    def tag_markup(tags: object, limit: int = 3) -> str:
+        values = tags if isinstance(tags, list) else []
+        return "".join(
+            f'<span class="brain-tag">{text(tag)}</span>' for tag in values[:limit]
+        )
+
     item_markup = "".join(
-        '<li class="border-b border-line px-3 py-3 last:border-0" data-brain-item '
+        '<li class="brain-item border-b border-line last:border-0" data-brain-item '
         f'data-item-id="{text(item["id"])}" data-search="{text(item["title"])} {text(item["summary"])} {text(" ".join(item["tags"]))}">'
-        f'<button class="w-full text-left focus:outline-none focus:ring-2 focus:ring-accent" data-select-item="{text(item["id"])}" type="button">'
-        f'<span class="block font-bold">{text(item["title"])}</span><span class="mt-1 block text-xs">{text(item["item_type"])} · {text(", ".join(item["tags"]) or "untagged")}</span></button>'
-        '</li>'
+        f'<button class="min-h-14 w-full px-3 py-3 text-left focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent" data-select-item="{text(item["id"])}" type="button">'
+        f'<span class="block font-bold">{text(item["title"])}</span><span class="mt-1 block text-xs">{text(item["item_type"])} · {len(item["relations"])} direct links</span>{tag_markup(item["tags"])}'
+        '</button></li>'
         for item in items
     ) or '<li class="px-3 py-4 text-xs">(none recorded)</li>'
     connection_markup = "".join(
-        '<button class="brain-node focus:outline-none focus:ring-2 focus:ring-accent" '
-        f'data-select-item="{text(item["id"])}" type="button"><span>{text(item["title"])}</span><small>'
-        + (
-            " · ".join(
-                f'{text(relation["relation_type"])} → {text(relation["related_item_title"])}'
-                for relation in item["relations"]
-            )
-            or "No stored connections"
-        )
-        + '</small></button>'
+        '<button class="brain-node focus:ring-2 focus:ring-accent" data-map-node '
+        f'data-item-id="{text(item["id"])}" data-item-title="{text(item["title"])}" data-select-item="{text(item["id"])}" type="button">'
+        f'<span class="font-bold">{text(item["title"])}</span><small class="node-meta">{text(item["item_type"])} · {len(item["relations"])} direct links</small>'
+        f'<small>{text(item["summary"])}</small></button>'
         for item in items
     ) or '<p class="p-3 text-xs">No active records to explore.</p>'
+
+    relation_rows: list[tuple[object, object, object, object, object, object, object]] = []
+    relation_keys: set[tuple[str, str, str, str]] = set()
+    item_titles = {str(item["id"]): str(item["title"]) for item in items}
+    for item in items:
+        for relation in item["relations"]:
+            source_id = str(item["id"])
+            target_id = str(relation["related_item_id"])
+            key = tuple(sorted((source_id, target_id))) + (
+                str(relation["relation_type"]), str(relation.get("origin", ""))
+            )
+            if key not in relation_keys:
+                relation_keys.add(key)
+                relation_rows.append((source_id, target_id, item_titles.get(source_id, item["title"]), relation["related_item_title"], relation["relation_type"], relation["explanation"], relation.get("origin", "Not recorded")))
+    relation_markup = "".join(
+        '<li><button class="brain-relation focus:ring-2 focus:ring-inset focus:ring-accent" '
+        f'data-relation-source="{text(source_id)}" data-relation-target="{text(target_id)}" data-select-item="{text(source_id)}" type="button">'
+        f'<span class="font-bold">{text(source_title)} <span aria-hidden="true">↔</span> {text(target_title)}</span>'
+        f'<span class="relation-kind">{text(relation_type)} · {text(origin)}</span>'
+        f'<span class="relation-explanation">{text(explanation)}</span></button></li>'
+        for source_id, target_id, source_title, target_title, relation_type, explanation, origin in relation_rows
+    ) or '<li class="px-3 py-4 text-xs">No stored relationships yet.</li>'
+
+    tag_groups: dict[str, list[dict[str, object]]] = {}
+    for item in items:
+        for tag in item["tags"]:
+            tag_groups.setdefault(str(tag), []).append(item)
+    cluster_markup = "".join(
+        '<div class="brain-cluster"><button data-select-item="'
+        f'{text(group_items[0]["id"])}" type="button"><span class="font-bold">{text(tag)}</span> <span class="text-xs">({len(group_items)})</span></button>'
+        f'<small>{text(" · ".join(str(item["title"]) for item in group_items[:3]))}</small></div>'
+        for tag, group_items in sorted(tag_groups.items(), key=lambda group: (-len(group[1]), group[0]))[:6]
+    ) or '<p class="mt-3 text-xs">No tagged clusters yet.</p>'
     details_markup = "".join(
         '<article class="brain-detail" data-item-detail '
         f'data-item-id="{text(item["id"])}" {"hidden" if index else ""}>'
         f'<h3 class="text-lg font-bold">{text(item["title"])}</h3><p class="mt-2 text-xs leading-5">{text(item["summary"])}</p>'
         f'<p class="mt-3 text-xs">SAVED: {timestamp(item["captured_at"])} · STATE: {text(item["source_state"])}</p>'
         + (f'<p class="mt-2 text-xs">SOURCE: {source_url_markup(item["source_url"])}</p>' if item["source_url"] else "")
-        + '<div class="mt-4"><p class="font-bold text-xs">CONNECTIONS</p><ul class="mt-2 space-y-2 text-xs">'
+        + '<div class="mt-4"><p class="font-bold text-xs">DIRECT_CONNECTIONS</p><ul class="mt-2 space-y-2 text-xs">'
         + "".join(
-            f'<li><span class="font-bold">{text(relation["relation_type"])}</span> → {text(relation["related_item_title"])}: {text(relation["explanation"])} '
-            f'(ORIGIN: {text(relation.get("origin", "Not recorded"))} · CONFIDENCE: {text(f"{float(relation.get('confidence', 0)):.0%}")})</li>'
+            f'<li class="brain-detail-connection"><span class="font-bold">{text(relation["related_item_title"])}</span><br><span>{text(relation["relation_type"])} · {text(relation.get("origin", "Not recorded"))} · {text(f"{float(relation.get('confidence', 0)):.0%}")}</span><br>{text(relation["explanation"])}</li>'
             for relation in item["relations"]
         )
-        + '</ul></div><div class="mt-5 flex gap-2"><button class="border-2 border-ink px-3 py-1 text-xs font-bold hover:bg-ink hover:text-panel" data-archive-item="'
+        + ('</ul></div>' if item["relations"] else '<li class="mt-2 text-xs">No direct stored relationships yet.</li></ul></div>')
+        + '<div class="mt-5 flex gap-2"><button class="min-h-11 border-2 border-ink px-3 py-1 text-xs font-bold hover:bg-ink hover:text-panel focus:outline-none focus:ring-2 focus:ring-accent" data-archive-item="'
         + text(item["id"])
-        + '" type="button">ARCHIVE</button><button class="border-2 border-alert px-3 py-1 text-xs font-bold text-alert hover:bg-alert hover:text-panel" data-delete-item="'
+        + '" type="button">ARCHIVE</button><button class="min-h-11 border-2 border-alert px-3 py-1 text-xs font-bold text-alert hover:bg-alert hover:text-panel focus:outline-none focus:ring-2 focus:ring-alert" data-delete-item="'
         + text(item["id"])
         + '" data-delete-title="'
         + text(item["title"])
@@ -292,7 +325,7 @@ def render_brain_explorer(snapshot: dict[str, object]) -> str:
     ) or '<p class="text-xs">Select a saved item to inspect it.</p>'
     return render_template(
         "brain.html",
-        {"timeline": timeline_markup, "items": item_markup, "connections": connection_markup, "details": details_markup},
+        {"timeline": timeline_markup, "items": item_markup, "connections": connection_markup, "clusters": cluster_markup, "relations": relation_markup, "details": details_markup, "relationship_count": str(len(relation_rows))},
     )
 
 
