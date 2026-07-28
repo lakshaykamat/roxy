@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -8,7 +9,12 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from src import config
 from src.knowledge import brain_store
-from src.knowledge.brain_analysis import BrainAnalysis, RelationCandidate, analyze_and_save_item
+from src.knowledge.brain_analysis import (
+    BrainAnalysis,
+    RelationCandidate,
+    _analysis_from_content,
+    analyze_and_save_item,
+)
 
 
 class BrainAnalysisTests(unittest.IsolatedAsyncioTestCase):
@@ -40,6 +46,39 @@ class BrainAnalysisTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual((saved.title, saved.tags), ("Ruchi's birthday is 17 June 2005.", []))
         self.assertEqual(brain_store.list_item_relations(saved.id), [])
+
+    async def test_hindi_content_is_replaced_with_english_analysis_before_save(self):
+        analysis = BrainAnalysis(
+            "Project meeting",
+            "The project meeting is tomorrow.",
+            "event",
+            ["domain:work"],
+            content="The project meeting is tomorrow at 10 AM.",
+        )
+        with patch(
+            "src.knowledge.brain_analysis.ask_brain_analysis",
+            new=AsyncMock(return_value=analysis),
+        ):
+            saved = await analyze_and_save_item(
+                "कल सुबह 10 बजे प्रोजेक्ट मीटिंग है।", "event", "explicit"
+            )
+
+        self.assertEqual(saved.content, "The project meeting is tomorrow at 10 AM.")
+        self.assertEqual(saved.title, "Project meeting")
+
+    def test_analysis_rejects_devanagari_metadata(self):
+        response = json.dumps(
+            {
+                "content": "The meeting is tomorrow.",
+                "title": "कल की मीटिंग",
+                "summary": "The meeting is tomorrow.",
+                "item_type": "idea",
+                "entities": [],
+                "domains": ["work"],
+            }
+        )
+
+        self.assertIsNone(_analysis_from_content("Hindi input", "idea", response))
 
     async def test_inferred_relation_requires_the_strict_confidence_threshold(self):
         brain_store.save_item("Prepare for interview", "Interview", "Prepare", "goal", ["domain:career"], "text", "explicit")

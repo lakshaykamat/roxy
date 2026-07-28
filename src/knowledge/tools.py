@@ -6,7 +6,11 @@ import sqlite3
 
 from src.core.errors import retry_async, try_async
 from src.knowledge import brain_store
-from src.knowledge.brain_analysis import analyze_and_save_capture, analyze_and_save_item
+from src.knowledge.brain_analysis import (
+    analyze_and_save_capture,
+    analyze_and_save_item,
+    contains_devanagari,
+)
 from src.knowledge.capture_planner import build_capture_plan
 from src.knowledge.constants import BRAIN_ITEM_TYPES
 from src.knowledge.public_link_reader import read_public_link
@@ -154,7 +158,11 @@ async def save_brain_item(
         source_url = values.get("source_url")
         if source_url is not None and not isinstance(source_url, str):
             raise ValueError("Source URL must be text.")
-        if capture_mode == "automatic":
+        should_translate_automatic_capture = capture_mode == "automatic" and any(
+            contains_devanagari(_text(values, field))
+            for field in ("content", "title", "summary")
+        )
+        if capture_mode == "automatic" and not should_translate_automatic_capture:
             operation = lambda: asyncio.to_thread(
                 brain_store.save_item,
                 _text(values, "content"),
@@ -171,7 +179,8 @@ async def save_brain_item(
             operation = lambda: analyze_and_save_item(
                 _text(values, "content"), item_type, capture_mode,
                 title=_text(values, "title"), summary=_text(values, "summary"),
-                tags=_tags(values), source_type="text", source_url=source_url,
+                tags=_tags(values), source_type="text", capture_key=capture_key,
+                source_url=source_url,
             )
         item = await retry_async(
             operation,

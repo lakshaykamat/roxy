@@ -20,6 +20,7 @@ class BrainAnalysis:
     summary: str
     item_type: str
     tags: list[str]
+    content: str = ""
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,10 @@ def normalize_tag(kind: str, value: str) -> str | None:
     return f"{kind}:{normalized}"
 
 
+def contains_devanagari(value: str) -> bool:
+    return any("\u0900" <= character <= "\u097f" for character in value)
+
+
 def _analysis_schema() -> dict[str, object]:
     return {
         "type": "json_schema",
@@ -47,12 +52,13 @@ def _analysis_schema() -> dict[str, object]:
             "schema": {
                 "type": "object",
                 "properties": {
+                    "content": {"type": "string"},
                     "title": {"type": "string"}, "summary": {"type": "string"},
                     "item_type": {"type": "string", "enum": sorted(BRAIN_ITEM_TYPES)},
                     "entities": {"type": "array", "items": {"type": "string"}},
                     "domains": {"type": "array", "items": {"type": "string"}},
                 },
-                "required": ["title", "summary", "item_type", "entities", "domains"],
+                "required": ["content", "title", "summary", "item_type", "entities", "domains"],
                 "additionalProperties": False,
             },
         },
@@ -61,16 +67,22 @@ def _analysis_schema() -> dict[str, object]:
 
 def _analysis_from_content(content: str, item_type: str, response: str) -> BrainAnalysis | None:
     values = json.loads(response)
+    translated_content = values.get("content")
     title = values.get("title")
     summary = values.get("summary")
     analyzed_type = values.get("item_type")
     entities = values.get("entities")
     domains = values.get("domains")
-    if not all(isinstance(value, str) and value.strip() for value in (title, summary, analyzed_type)):
+    if not all(
+        isinstance(value, str) and value.strip()
+        for value in (translated_content, title, summary, analyzed_type)
+    ):
         return None
     if analyzed_type not in BRAIN_ITEM_TYPES:
         return None
     if not isinstance(entities, list) or not isinstance(domains, list):
+        return None
+    if any(contains_devanagari(value) for value in (translated_content, title, summary)):
         return None
     tags = [
         tag for kind, values in (("entity", entities), ("domain", domains))
@@ -80,7 +92,9 @@ def _analysis_from_content(content: str, item_type: str, response: str) -> Brain
     tags = list(dict.fromkeys(tags))
     if len(tags) > 12:
         return None
-    return BrainAnalysis(title.strip(), summary.strip(), analyzed_type, tags)
+    return BrainAnalysis(
+        title.strip(), summary.strip(), analyzed_type, tags, translated_content.strip()
+    )
 
 
 async def ask_brain_analysis(content: str, item_type: str) -> BrainAnalysis | None:
@@ -90,7 +104,10 @@ async def ask_brain_analysis(content: str, item_type: str) -> BrainAnalysis | No
             model=OPENAI_MODEL,
             response_format=_analysis_schema(),
             messages=[
-                {"role": "system", "content": "Return concise user-visible metadata for a saved thought. Do not include reasoning or hidden scratch work."},
+                {
+                    "role": "system",
+                    "content": "Translate the saved thought into concise English. Return English-only content and user-visible metadata, even when the source is in another language. Do not include reasoning or hidden scratch work.",
+                },
                 {"role": "user", "content": f"Thought: {content}\nSuggested type: {item_type}"},
             ],
         )
@@ -162,7 +179,10 @@ async def ask_relation_candidates(item: brain_store.BrainItem, candidates: list[
             model=OPENAI_MODEL,
             response_format=_relation_schema(candidate_ids),
             messages=[
-                {"role": "system", "content": "Identify only clearly related topics. Return concise user-visible explanations, never reasoning."},
+                {
+                    "role": "system",
+                    "content": "Identify only clearly related topics. Return concise English-only user-visible explanations, never reasoning.",
+                },
                 {"role": "user", "content": json.dumps({
                     "new_item": {"title": item.title, "summary": item.summary, "tags": item.tags},
                     "candidates": [{"id": candidate.id, "title": candidate.title, "summary": candidate.summary, "tags": candidate.tags} for candidate in candidates],
@@ -179,6 +199,7 @@ async def ask_relation_candidates(item: brain_store.BrainItem, candidates: list[
             if isinstance(value, dict)
             and value.get("target_item_id") in candidate_ids
             and isinstance(value.get("explanation"), str) and value["explanation"].strip()
+            and not contains_devanagari(value["explanation"])
             and isinstance(value.get("confidence"), (int, float)) and not isinstance(value.get("confidence"), bool)
             and value["confidence"] >= RELATION_CONFIDENCE_THRESHOLD
         ]
@@ -220,7 +241,7 @@ async def analyze_and_save_item(
     analysis = await analyze_brain_item(content, item_type)
     saved = await asyncio.to_thread(
         brain_store.save_item,
-        content,
+        analysis.content if analysis and analysis.content else content,
         analysis.title if analysis else (title or content[:120]),
         analysis.summary if analysis else (summary or content[:500]),
         analysis.item_type if analysis else item_type,
@@ -242,6 +263,7 @@ async def analyze_and_save_capture(plan: CapturePlan) -> object:
         analyzed_items.append(
             replace(
                 item,
+                content=analysis.content if analysis and analysis.content else item.content,
                 title=analysis.title if analysis else item.title,
                 summary=analysis.summary if analysis else item.summary,
                 item_type=analysis.item_type if analysis else item.item_type,

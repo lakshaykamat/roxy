@@ -77,9 +77,9 @@ class IntrospectionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([item.id for item in eligible], [recent.id])
 
-    async def test_nightly_refresh_rewrites_metadata_but_preserves_content_and_refreshes_relations(self):
+    async def test_nightly_refresh_translates_content_and_refreshes_relations(self):
         source = brain_store.save_item(
-            "Ruchi works at Acme", "Old title", "Old", "idea", [], "text", "explicit"
+            "रुचि Acme में काम करती है", "Old title", "Old", "idea", [], "text", "explicit"
         )
         target = brain_store.save_item(
             "Acme project", "Acme", "Project", "project", ["entity:acme"], "text", "explicit"
@@ -90,7 +90,11 @@ class IntrospectionTests(unittest.IsolatedAsyncioTestCase):
                 ((datetime.now(timezone.utc) - timedelta(days=11)).isoformat(), target.id),
             )
         analysis = BrainAnalysis(
-            "Ruchi at Acme", "Ruchi works at Acme.", "fact", ["entity:acme"]
+            "Ruchi at Acme",
+            "Ruchi works at Acme.",
+            "fact",
+            ["entity:acme"],
+            content="Ruchi works at Acme.",
         )
         relation = RelationCandidate(
             target.id, "same entity", "Both records refer to Acme.", 1.0, "direct"
@@ -106,7 +110,7 @@ class IntrospectionTests(unittest.IsolatedAsyncioTestCase):
 
         updated = brain_store.get_item(source.id)
         self.assertEqual(refreshed, 1)
-        self.assertEqual(updated.content, "Ruchi works at Acme")
+        self.assertEqual(updated.content, "Ruchi works at Acme.")
         self.assertEqual(
             (updated.title, updated.summary, updated.tags),
             ("Ruchi at Acme", "Ruchi works at Acme.", ["entity:acme"]),

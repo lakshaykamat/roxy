@@ -303,6 +303,32 @@ class BrainStoreTests(unittest.TestCase):
             ("Lakshay Kamat", "Lakshay works as an AI engineer.", "fact", ["entity:lakshay kamat", "domain:career"]),
         )
 
+    def test_automatic_hindi_save_uses_english_analysis(self):
+        arguments = json.dumps({
+            "content": "कल मीटिंग है",
+            "title": "मीटिंग",
+            "summary": "कल मीटिंग है",
+            "item_type": "idea",
+            "tags": [],
+            "capture_mode": "automatic",
+        })
+        translated = brain_store.save_item(
+            "The meeting is tomorrow.", "Meeting", "The meeting is tomorrow.",
+            "idea", [], "text", "automatic", capture_key="telegram:7:12:0",
+        )
+
+        with patch(
+            "src.knowledge.tools.analyze_and_save_item",
+            new=AsyncMock(return_value=translated),
+        ) as analyze:
+            result = asyncio.run(
+                tools.save_brain_item(arguments, capture_key="telegram:7:12:0")
+            )
+
+        analyze.assert_awaited_once()
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["brain_item"]["title"], "Meeting")
+
     def test_automatic_save_requires_a_capture_key(self):
         result = asyncio.run(
             tools.save_brain_item(

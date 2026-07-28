@@ -470,10 +470,13 @@ def update_organized_metadata(
 ) -> BrainItem | None:
     with _brain_database() as connection:
         cursor = connection.execute(
-            "UPDATE brain_items SET title = ?, summary = ?, item_type = CASE "
+            "UPDATE brain_items SET content = CASE WHEN ? <> '' THEN ? ELSE content END, "
+            "title = ?, summary = ?, item_type = CASE "
             "WHEN item_type = 'task' THEN item_type ELSE ? END, tags_json = ?, "
             "updated_at = ?, last_organized_at = ? WHERE id = ? AND status = 'active'",
             (
+                analysis.content,
+                analysis.content,
                 analysis.title,
                 analysis.summary,
                 analysis.item_type,
