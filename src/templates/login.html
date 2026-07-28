@@ -3,40 +3,41 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#eef0e9">
   <title>Sign in · Roxy</title>
+  <link rel="preconnect" href="https://cdn.tailwindcss.com">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
       theme: {
         extend: {
-          colors: {
-            ink: '#172033', cloud: '#f7f8fc', line: '#e7eaf1', violet: '#6750a4'
-          },
-          boxShadow: { soft: '0 12px 35px rgba(23, 32, 51, 0.07)' }
+          colors: { paper: '#eef0e9', panel: '#f9faf6', ink: '#18231b', line: '#8b9588', accent: '#315b3b', alert: '#823a2e' },
+          fontFamily: { mono: ['"Courier New"', 'Courier', 'monospace'] }
         }
       }
     };
   </script>
 </head>
-<body class="min-h-screen bg-cloud font-sans text-ink antialiased">
+<body class="min-h-screen bg-paper font-mono text-sm text-ink antialiased">
   <main class="flex min-h-screen items-center justify-center px-5 py-10">
-    <section class="w-full max-w-md rounded-2xl border border-line bg-white p-8 shadow-soft sm:p-10" aria-labelledby="page-title">
+    <section class="w-full max-w-md border-2 border-ink bg-panel p-6 sm:p-8" aria-labelledby="page-title">
       <div class="mb-8 flex items-center gap-3">
-        <span class="grid h-10 w-10 place-items-center rounded-xl bg-violet text-lg font-semibold text-white">R</span>
+        <span class="grid h-10 w-10 place-items-center border-2 border-ink bg-accent text-lg font-bold text-panel">R</span>
         <div>
-          <p class="text-sm font-semibold tracking-wide text-violet">ROXY</p>
-          <p class="text-xs text-slate-500">Private assistant dashboard</p>
+          <p class="text-sm font-bold tracking-[0.18em] text-ink">ROXY</p>
+          <p class="text-xs">PRIVATE ASSISTANT / SIGN IN</p>
         </div>
       </div>
-      <h1 id="page-title" class="text-2xl font-semibold tracking-tight text-ink">Welcome back</h1>
-      <p class="mt-2 text-sm leading-6 text-slate-600">Sign in to view Roxy’s activity and service status.</p>
-      <div class="mt-5 text-sm text-red-700 [&>p]:rounded-lg [&>p]:border [&>p]:border-red-200 [&>p]:bg-red-50 [&>p]:px-3 [&>p]:py-2">{{error_message}}</div>
+      <p class="text-xs font-bold tracking-[0.16em] text-accent">ACCESS / 00</p>
+      <h1 id="page-title" class="mt-2 text-2xl font-bold tracking-tight text-ink">Private system access</h1>
+      <p class="mt-2 text-xs leading-5">Sign in to view Roxy’s system record and connected memory.</p>
+      <div class="mt-5 text-sm text-alert [&>p]:border-2 [&>p]:border-alert [&>p]:px-3 [&>p]:py-2">{{error_message}}</div>
       <form method="post" action="/login" class="mt-6 space-y-5">
-        <label class="block text-sm font-medium text-slate-700">
-          Password
-          <input class="mt-2 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base text-ink outline-none transition placeholder:text-slate-400 focus:border-violet focus:ring-4 focus:ring-violet/10" type="password" name="password" autocomplete="current-password" required autofocus>
+        <label class="block text-xs font-bold tracking-wide">
+          PASSWORD
+          <input class="mt-2 block min-h-11 w-full border-2 border-ink bg-panel px-3 py-2 text-base text-ink outline-none transition focus:ring-2 focus:ring-accent" type="password" name="password" autocomplete="current-password" required autofocus>
         </label>
-        <button class="w-full rounded-lg bg-violet px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-violet/90 focus:outline-none focus:ring-4 focus:ring-violet/20" type="submit">Sign in</button>
+        <button class="min-h-11 w-full border-2 border-ink bg-accent px-4 py-2 text-xs font-bold text-panel transition hover:bg-ink focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2" type="submit">SIGN IN</button>
       </form>
     </section>
   </main>

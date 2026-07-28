@@ -168,6 +168,23 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("DOMAIN:WORK / 2026-07-25", rendered)
         self.assertNotIn("capture date", rendered)
 
+    def test_brain_page_draws_an_edge_for_each_visible_stored_relation(self):
+        related_item = {
+            **BRAIN_SNAPSHOT["items"][0],
+            "id": 8,
+            "title": "Plan",
+            "relations": [],
+        }
+
+        rendered = render_brain_explorer(
+            {**BRAIN_SNAPSHOT, "items": [BRAIN_SNAPSHOT["items"][0], related_item]}
+        )
+
+        self.assertIn('class="brain-network"', rendered)
+        self.assertIn('data-edge-source="7" data-edge-target="8"', rendered)
+        self.assertIn('data-map-node data-item-id="7"', rendered)
+        self.assertIn('data-map-node data-item-id="8"', rendered)
+
     def test_brain_page_does_not_render_unsafe_source_url_as_a_link(self):
         snapshot = {**BRAIN_SNAPSHOT, "items": [{**BRAIN_SNAPSHOT["items"][0], "source_url": "javascript:alert(1)"}]}
         rendered = render_brain_explorer(snapshot)

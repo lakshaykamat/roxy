@@ -78,8 +78,11 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("casual, friendly female", chat.SYSTEM_PROMPT)
         self.assertIn("warm, chill, and a little playful", chat.SYSTEM_PROMPT)
         self.assertIn("plain, everyday English", chat.SYSTEM_PROMPT)
+        self.assertIn("Talk only in English or Hinglish", chat.SYSTEM_PROMPT)
+        self.assertIn("reply in Hindi, Urdu, or any other language or script", chat.SYSTEM_PROMPT)
         self.assertIn("one to three short sentences", chat.SYSTEM_PROMPT)
         self.assertIn("Ask only one question at a time", chat.SYSTEM_PROMPT)
+        self.assertIn("Treat a bare clock time as its next occurrence", chat.SYSTEM_PROMPT)
 
     async def test_chat_persists_each_message_and_submits_to_debounce(self):
         coordinator = MagicMock()

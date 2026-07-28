@@ -1,5 +1,6 @@
 import html
 import logging
+import math
 import secrets
 import sqlite3
 from pathlib import Path
@@ -262,14 +263,6 @@ def render_brain_explorer(snapshot: dict[str, object]) -> str:
         '</button></li>'
         for item in items
     ) or '<li class="px-3 py-4 text-xs">(none recorded)</li>'
-    connection_markup = "".join(
-        '<button class="brain-node focus:ring-2 focus:ring-accent" data-map-node '
-        f'data-item-id="{text(item["id"])}" data-item-title="{text(item["title"])}" data-select-item="{text(item["id"])}" type="button">'
-        f'<span class="font-bold">{text(item["title"])}</span><small class="node-meta">{text(item["item_type"])} · {len(item["relations"])} direct links</small>'
-        f'<small>{text(item["summary"])}</small></button>'
-        for item in items
-    ) or '<p class="p-3 text-xs">No active records to explore.</p>'
-
     relation_rows: list[tuple[object, object, object, object, object, object, object]] = []
     relation_keys: set[tuple[str, str, str, str]] = set()
     item_titles = {str(item["id"]): str(item["title"]) for item in items}
@@ -291,6 +284,41 @@ def render_brain_explorer(snapshot: dict[str, object]) -> str:
         f'<span class="relation-explanation">{text(explanation)}</span></button></li>'
         for source_id, target_id, source_title, target_title, relation_type, explanation, origin in relation_rows
     ) or '<li class="px-3 py-4 text-xs">No stored relationships yet.</li>'
+
+    positions: dict[str, tuple[float, float]] = {}
+    node_count = len(items)
+    for index, item in enumerate(items):
+        angle = (2 * math.pi * index / max(node_count, 1)) - (math.pi / 2)
+        positions[str(item["id"])] = (450 + 300 * math.cos(angle), 245 + 165 * math.sin(angle))
+
+    graph_edges = "".join(
+        f'<line class="brain-edge" data-edge-source="{text(source_id)}" data-edge-target="{text(target_id)}" '
+        f'x1="{positions[str(source_id)][0]:.1f}" y1="{positions[str(source_id)][1]:.1f}" '
+        f'x2="{positions[str(target_id)][0]:.1f}" y2="{positions[str(target_id)][1]:.1f}"><title>{text(source_title)} {text(relation_type)} {text(target_title)}</title></line>'
+        for source_id, target_id, source_title, target_title, relation_type, _, _ in relation_rows
+        if str(source_id) in positions and str(target_id) in positions
+    )
+
+    def graph_label(value: object, limit: int = 19) -> str:
+        label = str(value)
+        return text(label if len(label) <= limit else f"{label[:limit - 1]}…")
+
+    graph_nodes = "".join(
+        '<g class="brain-node" role="button" tabindex="0" data-map-node '
+        f'data-item-id="{text(item["id"])}" data-item-title="{text(item["title"])}" data-select-item="{text(item["id"])}" '
+        f'transform="translate({positions[str(item["id"])][0]:.1f} {positions[str(item["id"])][1]:.1f})">'
+        f'<title>{text(item["title"])} — {text(item["item_type"])}; {len(item["relations"])} direct links</title>'
+        '<circle r="36"></circle>'
+        f'<text class="brain-node-title" y="-3">{graph_label(item["title"])}</text>'
+        f'<text class="brain-node-meta" y="13">{text(item["item_type"])}</text></g>'
+        for item in items
+    )
+    connection_markup = (
+        '<svg class="brain-network" viewBox="0 0 900 490" role="img" aria-label="Network graph of stored brain records and their direct relationships">'
+        '<desc>Lines show stored direct relationships. Select a record to focus its connections.</desc>'
+        f'{graph_edges}{graph_nodes}</svg>'
+        if items else '<p class="p-3 text-xs">No active records to explore.</p>'
+    )
 
     tag_groups: dict[str, list[dict[str, object]]] = {}
     for item in items:
