@@ -708,6 +708,13 @@ class OptionalIntegrationTests(unittest.TestCase):
         self.assertNotIn("create_expense", reloaded.SYSTEM_PROMPT)
         self.assertIn("reminder", reloaded.SYSTEM_PROMPT)
 
+    def test_expense_prompt_distinguishes_food_from_fast_food(self):
+        from src.prompts import system
+
+        self.assertIn("Food is for normal meals and\n  groceries", system.EXPENSE_SYSTEM_PROMPT)
+        self.assertIn("Fast Food is for packaged snacks, oily food, takeaway, delivery,", system.EXPENSE_SYSTEM_PROMPT)
+        self.assertIn("street food, and food eaten outside", system.EXPENSE_SYSTEM_PROMPT)
+
 
 if __name__ == "__main__":
     unittest.main()
