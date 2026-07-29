@@ -25,6 +25,8 @@ from src.expenses.models import Expense, parse_expense, parse_expense_list
 logger = logging.getLogger(__name__)
 
 API_PREFIX = "/api/v1/expenses"
+CATEGORIES_PATH = f"{API_PREFIX}/categories"
+BULK_UPSERT_PATH = f"{API_PREFIX}/bulk-upsert"
 
 
 class ExpenseTrackerClient:
@@ -62,6 +64,21 @@ class ExpenseTrackerClient:
     async def create_expense(self, payload: dict[str, object]) -> Expense:
         data = await self._request("POST", API_PREFIX, json=payload)
         return parse_expense(_unwrap_object(data))
+
+    async def bulk_upsert_expenses(self, payloads: list[dict[str, object]]) -> dict[str, object]:
+        """Create records without ``_id`` and update records that include one."""
+        data = await self._request("POST", BULK_UPSERT_PATH, json={"expenses": payloads})
+        if not isinstance(data, dict):
+            raise ExpenseServiceUnavailableError()
+        return {
+            "created": _coerce_count(data.get("created")),
+            "updated": _coerce_count(data.get("updated")),
+            "expenses": parse_expense_list(_unwrap_list(data)),
+        }
+
+    async def list_categories(self) -> list[str]:
+        data = await self._request("GET", CATEGORIES_PATH)
+        return _unwrap_categories(data)
 
     async def list_expenses(self, params: dict[str, object]) -> dict[str, object]:
         """Return ``{"expenses": [...]}`` or ``{"groups": [...]}`` when grouping.
@@ -158,11 +175,11 @@ def _unwrap_object(data: object) -> dict[str, object]:
     raise ExpenseServiceUnavailableError()
 
 
-def _unwrap_list(data: object) -> object:
+def _unwrap_list(data: object, keys: tuple[str, ...] = ("data", "expenses", "results", "items")) -> list[object]:
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
-        for key in ("data", "expenses", "results", "items"):
+        for key in keys:
             inner = data.get(key)
             if isinstance(inner, list):
                 return inner
@@ -171,16 +188,8 @@ def _unwrap_list(data: object) -> object:
 
 def _unwrap_groups(data: object) -> list[dict[str, object]]:
     """Normalise a category breakdown into ``[{category, total, count}]``."""
-    raw = data
-    if isinstance(data, dict):
-        for key in ("data", "groups", "categories", "expenses", "results"):
-            if isinstance(data.get(key), list):
-                raw = data[key]
-                break
-    if not isinstance(raw, list):
-        return []
     groups: list[dict[str, object]] = []
-    for entry in raw:
+    for entry in _unwrap_list(data, ("data", "groups", "categories", "expenses", "results")):
         if not isinstance(entry, dict):
             continue
         category = entry.get("category") or entry.get("_id") or entry.get("name") or "Uncategorised"
@@ -194,6 +203,31 @@ def _unwrap_groups(data: object) -> list[dict[str, object]]:
             group["count"] = entry["count"]
         groups.append(group)
     return groups
+
+
+def _unwrap_categories(data: object) -> list[str]:
+    """Extract category labels from the documented ``data.categories`` response."""
+    categories = _unwrap_object(data).get("categories")
+    if not isinstance(categories, list):
+        raise ExpenseServiceUnavailableError()
+    labels: list[str] = []
+    for category in categories:
+        if isinstance(category, str) and category.strip():
+            labels.append(category.strip())
+        elif isinstance(category, dict):
+            label = category.get("name") or category.get("label") or category.get("category")
+            if isinstance(label, str) and label.strip():
+                labels.append(label.strip())
+    return labels
+
+
+def _coerce_count(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
 
 
 _client: ExpenseTrackerClient | None = None

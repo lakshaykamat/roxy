@@ -51,6 +51,15 @@ def format_created(expense: Expense, currency: str) -> str:
     return " ".join(parts)
 
 
+def format_bulk_upsert(created: int, updated: int) -> str:
+    parts: list[str] = []
+    if created:
+        parts.append(f"added {created} expense{'s' if created != 1 else ''}")
+    if updated:
+        parts.append(f"updated {updated} expense{'s' if updated != 1 else ''}")
+    return f"Bulk save complete, {' and '.join(parts)}." if parts else "Bulk save complete."
+
+
 def format_expense_line(index: int, expense: Expense, currency: str) -> str:
     pieces = [f"{index}. {expense.title}", format_amount(expense.amount, currency)]
     if expense.category:

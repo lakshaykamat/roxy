@@ -18,7 +18,7 @@ from src import config
 from src.core.errors import try_async
 from src.expenses import models
 from src.expenses.errors import ExpenseTrackerError, ExpenseValidationError
-from src.expenses.models import Expense, ExpenseCategory, match_expenses
+from src.expenses.models import Expense, match_expenses
 from src.expenses.client import get_client
 from src.expenses import formatting as fmt
 from src.expenses import state
@@ -26,9 +26,6 @@ from src.expenses import state
 logger = logging.getLogger(__name__)
 
 DATE_FORMAT_NOTE = "Dates use YYYY-MM-DD and months use YYYY-MM."
-
-_CATEGORY_VALUES = [cat.value for cat in ExpenseCategory]
-
 
 # --------------------------------------------------------------------------- #
 # Tool definitions
@@ -40,8 +37,9 @@ CREATE_DEFINITION = {
         "name": "create_expense",
         "description": (
             "Record a new expense the user reports spending. Use only when the user is actually "
-            "adding an expense, not when merely discussing one. Requires a title (3-100 chars) and "
-            "an amount (>= 0.01). " + DATE_FORMAT_NOTE + " Date defaults to today if omitted. "
+            "adding an expense, not when merely discussing one. Requires a title (3-100 chars), "
+            "an amount (>= 0.01), and the single best matching supported category. "
+            + DATE_FORMAT_NOTE + " Date defaults to today if omitted. "
             "If the user names a category alias (e.g. Transport, Bills, Groceries), normalize it "
             "to the closest supported category before calling this tool."
         ),
@@ -52,20 +50,76 @@ CREATE_DEFINITION = {
                 "amount": {"type": "number", "description": "Amount spent, minimum 0.01."},
                 "category": {
                     "type": "string",
-                    "enum": _CATEGORY_VALUES,
                     "description": (
-                        "Optional spending category. Must be exactly one of the supported values: "
-                        + ", ".join(_CATEGORY_VALUES)
-                        + ". Never invent a new category."
+                        "Required spending category. Use a category returned by list_expense_categories."
                     ),
                 },
-                "description": {"type": "string", "description": "Optional note, max 500 chars."},
+                "description": {
+                    "type": "string",
+                    "description": "Optional specific note, max 500 chars. Omit generic or repetitive notes.",
+                },
                 "date": {"type": "string", "description": "Optional expense date in YYYY-MM-DD."},
                 "currency": {"type": "string", "description": "Currency code if the user named one, e.g. USD."},
             },
-            "required": ["title", "amount"],
+            "required": ["title", "amount", "category"],
             "additionalProperties": False,
         },
+    },
+}
+
+BULK_UPSERT_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": "bulk_upsert_expenses",
+        "description": (
+            "Create or update 1 to 100 expenses in one request. Use for multiple new expenses or "
+            "multiple updates only when every update has an API id from a prior tool result. An item "
+            "without expense_id is created; an item with expense_id is updated."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "expenses": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "expense_id": {
+                                "type": "string",
+                                "description": "Existing API id for an update. Omit to create.",
+                            },
+                            "title": {"type": "string"},
+                            "amount": {"type": "number", "description": "Minimum 0.01."},
+                            "category": {
+                                "type": "string",
+                                "description": "A category returned by list_expense_categories.",
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Optional specific note. Omit generic or repetitive notes.",
+                            },
+                            "date": {"type": "string", "description": "YYYY-MM-DD"},
+                        },
+                        "required": ["title", "amount", "category"],
+                        "additionalProperties": False,
+                    },
+                },
+                "currency": {"type": "string", "description": "Currency code if the user named one."},
+            },
+            "required": ["expenses"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+CATEGORIES_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": "list_expense_categories",
+        "description": "List the expense categories currently supported by the expense tracker.",
+        "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
     },
 }
 
@@ -75,7 +129,8 @@ LIST_DEFINITION = {
         "name": "list_expenses",
         "description": (
             "List or summarize expenses. With no filters it returns the current month, newest "
-            "first. Use groupBy='category' for a spending-by-category summary. " + DATE_FORMAT_NOTE
+            "first. A spending-by-category summary requires groupBy='category' plus start_date "
+            "and end_date. " + DATE_FORMAT_NOTE
         ),
         "parameters": {
             "type": "object",
@@ -140,12 +195,7 @@ UPDATE_DEFINITION = {
                         "amount": {"type": "number"},
                         "category": {
                             "type": "string",
-                            "enum": _CATEGORY_VALUES,
-                            "description": (
-                                "New category. Must be exactly one of: "
-                                + ", ".join(_CATEGORY_VALUES)
-                                + ". Never invent a new category."
-                            ),
+                            "description": "New category from list_expense_categories.",
                         },
                         "description": {"type": "string"},
                         "date": {"type": "string", "description": "YYYY-MM-DD"},
@@ -226,13 +276,45 @@ async def _tool_error(error: BaseException) -> dict[str, object]:
 async def create_expense(arguments: str) -> dict[str, object]:
     async def handler() -> dict[str, object]:
         values = _parse_arguments(arguments)
-        payload = models.build_create_payload(values)
+        categories = await get_client().list_categories()
+        payload = models.build_create_payload(values, categories)
         expense = await get_client().create_expense(payload)
         currency = _currency(values)
         return {
             "ok": True,
             "expense": expense.to_public(),
             "formatted": fmt.format_created(expense, currency),
+        }
+
+    return await _run(handler)
+
+
+async def bulk_upsert_expenses(arguments: str) -> dict[str, object]:
+    async def handler() -> dict[str, object]:
+        values = _parse_arguments(arguments)
+        categories = await get_client().list_categories()
+        payloads = models.build_bulk_upsert_payload(values.get("expenses"), categories)
+        result = await get_client().bulk_upsert_expenses(payloads)
+        saved: list[Expense] = result["expenses"]
+        return {
+            "ok": True,
+            "created": result["created"],
+            "updated": result["updated"],
+            "expenses": [expense.to_public() for expense in saved],
+            "formatted": fmt.format_bulk_upsert(result["created"], result["updated"]),
+        }
+
+    return await _run(handler)
+
+
+async def list_expense_categories(arguments: str) -> dict[str, object]:
+    async def handler() -> dict[str, object]:
+        _parse_arguments(arguments)
+        categories = await get_client().list_categories()
+        return {
+            "ok": True,
+            "categories": categories,
+            "formatted": "Available expense categories: " + ", ".join(categories) + ".",
         }
 
     return await _run(handler)
@@ -293,7 +375,8 @@ async def update_expense(arguments: str) -> dict[str, object]:
         changes = values.get("changes")
         if not isinstance(changes, dict):
             raise ExpenseValidationError("Tell me what to change about the expense.")
-        payload = models.build_update_payload(changes)  # rejects empty updates
+        categories = await get_client().list_categories() if "category" in changes else None
+        payload = models.build_update_payload(changes, categories)  # rejects empty updates
         currency = _currency(values)
 
         before, ambiguous = await _locate(values)

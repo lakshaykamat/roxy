@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
-from enum import Enum
 
 from src.expenses.errors import ExpenseValidationError
 
@@ -22,30 +21,11 @@ TITLE_MIN = 3
 TITLE_MAX = 100
 DESCRIPTION_MAX = 500
 MIN_AMOUNT = 0.01
+BULK_EXPENSES_MIN = 1
+BULK_EXPENSES_MAX = 100
 
 # Only these fields are ever accepted from the model or sent to the API.
 WRITABLE_FIELDS = ("title", "amount", "category", "description", "date")
-
-
-class ExpenseCategory(str, Enum):
-    FOOD = "Food"
-    FAST_FOOD = "Fast Food"
-    HEALTH_AND_FITNESS = "Health & Fitness"
-    HOUSING = "Housing"
-    TRANSPORTATION = "Transportation"
-    FINANCIAL = "Financial"
-    FAMILY = "Family"
-    RELATIONSHIP = "Relationship"
-    PERSONAL_CARE = "Personal Care"
-    ELECTRONICS = "Electronics"
-    CLOTHING = "Clothing"
-    ENTERTAINMENT = "Entertainment"
-    EDUCATION = "Education"
-    TRAVEL = "Travel"
-    MISCELLANEOUS = "Miscellaneous"
-
-
-_CATEGORY_LOOKUP: dict[str, str] = {cat.value.casefold(): cat.value for cat in ExpenseCategory}
 
 
 @dataclass(frozen=True)
@@ -152,15 +132,18 @@ def _validate_amount(value: object) -> float:
     return round(amount, 2)
 
 
-def _validate_category(value: object) -> str:
+def _validate_category(value: object, supported_categories: list[str] | None = None) -> str:
     if not isinstance(value, str):
         raise ExpenseValidationError("The category must be text.")
-    canonical = _CATEGORY_LOOKUP.get(value.strip().casefold())
+    category = value.strip()
+    if not category:
+        raise ExpenseValidationError("The category must not be empty.")
+    if supported_categories is None:
+        return category
+    lookup = {item.casefold(): item for item in supported_categories}
+    canonical = lookup.get(category.casefold())
     if canonical is None:
-        supported = ", ".join(cat.value for cat in ExpenseCategory)
-        raise ExpenseValidationError(
-            f"'{value}' is not a supported category. Supported: {supported}."
-        )
+        raise ExpenseValidationError(f"'{value}' is not a supported category.")
     return canonical
 
 
@@ -185,14 +168,15 @@ def _validate_date(value: object) -> str:
     return value
 
 
-def build_create_payload(values: dict[str, object]) -> dict[str, object]:
+def build_create_payload(
+    values: dict[str, object], supported_categories: list[str] | None = None,
+) -> dict[str, object]:
     """Validate and assemble the POST body for creating an expense."""
     payload: dict[str, object] = {
         "title": _validate_title(values.get("title")),
         "amount": _validate_amount(values.get("amount")),
+        "category": _validate_category(values.get("category"), supported_categories),
     }
-    if values.get("category") not in (None, ""):
-        payload["category"] = _validate_category(values["category"])
     if values.get("description") not in (None, ""):
         payload["description"] = _validate_description(values["description"])
     if values.get("date") not in (None, ""):
@@ -200,7 +184,9 @@ def build_create_payload(values: dict[str, object]) -> dict[str, object]:
     return payload
 
 
-def build_update_payload(values: dict[str, object]) -> dict[str, object]:
+def build_update_payload(
+    values: dict[str, object], supported_categories: list[str] | None = None,
+) -> dict[str, object]:
     """Validate and assemble a PATCH body containing only supplied fields.
 
     Raises :class:`ExpenseValidationError` if no updatable field is present so
@@ -212,7 +198,7 @@ def build_update_payload(values: dict[str, object]) -> dict[str, object]:
     if "amount" in values:
         payload["amount"] = _validate_amount(values["amount"])
     if "category" in values:
-        payload["category"] = _validate_category(values["category"])
+        payload["category"] = _validate_category(values["category"], supported_categories)
     if "description" in values:
         payload["description"] = _validate_description(values["description"])
     if "date" in values:
@@ -220,6 +206,27 @@ def build_update_payload(values: dict[str, object]) -> dict[str, object]:
     if not payload:
         raise ExpenseValidationError("Tell me what to change about the expense.")
     return payload
+
+
+def build_bulk_upsert_payload(
+    values: object, supported_categories: list[str] | None = None,
+) -> list[dict[str, object]]:
+    """Validate bulk expense records and translate tool IDs to API ``_id`` values."""
+    if not isinstance(values, list) or not (BULK_EXPENSES_MIN <= len(values) <= BULK_EXPENSES_MAX):
+        raise ExpenseValidationError(
+            f"Provide between {BULK_EXPENSES_MIN} and {BULK_EXPENSES_MAX} expenses."
+        )
+
+    payloads: list[dict[str, object]] = []
+    for index, value in enumerate(values, start=1):
+        if not isinstance(value, dict):
+            raise ExpenseValidationError(f"Expense {index} must be an object.")
+        payload = build_create_payload(value, supported_categories)
+        expense_id = value.get("expense_id")
+        if expense_id is not None:
+            payload["_id"] = validate_object_id(expense_id)
+        payloads.append(payload)
+    return payloads
 
 
 def build_list_params(
@@ -246,6 +253,10 @@ def build_list_params(
     if group_by is not None:
         if group_by != "category":
             raise ExpenseValidationError("I can only group expenses by category.")
+        if start_date is None or end_date is None:
+            raise ExpenseValidationError(
+                "A category summary needs both a start date and an end date."
+            )
         params["groupBy"] = "category"
     if limit is not None:
         if isinstance(limit, bool) or not isinstance(limit, int) or not (1 <= limit <= 100):

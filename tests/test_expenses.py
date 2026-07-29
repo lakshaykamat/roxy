@@ -21,7 +21,7 @@ from src.expenses.errors import (
     ExpenseServiceUnavailableError,
     ExpenseValidationError,
 )
-from src.expenses.models import Expense, ExpenseCategory
+from src.expenses.models import Expense
 from src.expenses.client import ExpenseTrackerClient
 from src.expenses import tools as expenses
 from src.expenses import state
@@ -121,8 +121,22 @@ class ModelTests(unittest.TestCase):
             models.build_list_params(start_date="2026-07-01")
 
     def test_build_list_params_accepts_month_group_and_limit(self):
-        params = models.build_list_params(month="2026-06", group_by="category", limit=10)
-        self.assertEqual(params, {"month": "2026-06", "groupBy": "category", "limit": 10})
+        params = models.build_list_params(
+            start_date="2026-06-01", end_date="2026-06-30", group_by="category", limit=10
+        )
+        self.assertEqual(
+            params,
+            {
+                "startDate": "2026-06-01",
+                "endDate": "2026-06-30",
+                "groupBy": "category",
+                "limit": 10,
+            },
+        )
+
+    def test_build_list_params_requires_a_date_range_for_category_summary(self):
+        with self.assertRaisesRegex(ExpenseValidationError, "category summary"):
+            models.build_list_params(group_by="category")
 
     def test_validate_object_id_rejects_non_object_id(self):
         with self.assertRaises(ExpenseValidationError):
@@ -135,65 +149,54 @@ class ModelTests(unittest.TestCase):
         self.assertEqual([m.id for m in matches], [uber.id])
 
     def test_validate_category_accepts_canonical_value(self):
-        payload = models.build_create_payload({"title": "Coffee", "amount": 4.5, "category": "Food"})
+        payload = models.build_create_payload(
+            {"title": "Coffee", "amount": 4.5, "category": "Food"}, ["Food"]
+        )
         self.assertEqual(payload["category"], "Food")
 
     def test_validate_category_case_insensitive(self):
-        payload = models.build_create_payload({"title": "Coffee", "amount": 4.5, "category": "food"})
+        categories = ["Food", "Fast Food"]
+        payload = models.build_create_payload(
+            {"title": "Coffee", "amount": 4.5, "category": "food"}, categories
+        )
         self.assertEqual(payload["category"], "Food")
-        payload2 = models.build_create_payload({"title": "KFC", "amount": 200, "category": "FAST FOOD"})
+        payload2 = models.build_create_payload(
+            {"title": "KFC", "amount": 200, "category": "FAST FOOD"}, categories
+        )
         self.assertEqual(payload2["category"], "Fast Food")
 
     def test_validate_category_rejects_unsupported_value(self):
         with self.assertRaises(ExpenseValidationError):
-            models.build_create_payload({"title": "Coffee", "amount": 4.5, "category": "Bills"})
+            models.build_create_payload(
+                {"title": "Coffee", "amount": 4.5, "category": "Bills"}, ["Food"]
+            )
 
-    def test_validate_category_rejects_unsupported_in_update(self):
-        with self.assertRaises(ExpenseValidationError):
-            models.build_update_payload({"category": "Transport"})
+    def test_create_requires_category(self):
+        with self.assertRaisesRegex(ExpenseValidationError, "category"):
+            models.build_create_payload({"title": "Coffee", "amount": 4.5})
 
-    def test_all_supported_categories_accepted_in_create(self):
-        for cat in ExpenseCategory:
-            payload = models.build_create_payload({"title": "Test", "amount": 1.0, "category": cat.value})
-            self.assertEqual(payload["category"], cat.value)
-
-    def test_all_supported_categories_accepted_in_update(self):
-        for cat in ExpenseCategory:
-            payload = models.build_update_payload({"category": cat.value})
-            self.assertEqual(payload["category"], cat.value)
-
-
-# --------------------------------------------------------------------------- #
-# Category validation
-# --------------------------------------------------------------------------- #
-
+    def test_bulk_upsert_translates_update_id_and_validates_every_expense(self):
+        payloads = models.build_bulk_upsert_payload([
+            {"title": "Coffee", "amount": 4.5, "category": "Food"},
+            {
+                "expense_id": "665f1e2a9c4d1a0012ab34cd",
+                "title": "Bus fare",
+                "amount": 2.5,
+                "category": "Transportation",
+            },
+        ])
+        self.assertNotIn("_id", payloads[0])
+        self.assertEqual(payloads[1]["_id"], "665f1e2a9c4d1a0012ab34cd")
 
 class CategoryValidationTests(unittest.TestCase):
-    def test_tool_schema_create_category_enum_matches_expense_category_enum(self):
-        schema_enums = set(
-            expenses.CREATE_DEFINITION["function"]["parameters"]["properties"]["category"]["enum"]
-        )
-        self.assertEqual(schema_enums, {cat.value for cat in ExpenseCategory})
+    def test_tool_schema_requires_a_dynamic_category(self):
+        category = expenses.CREATE_DEFINITION["function"]["parameters"]["properties"]["category"]
+        self.assertNotIn("enum", category)
+        self.assertIn("category", expenses.CREATE_DEFINITION["function"]["parameters"]["required"])
 
-    def test_tool_schema_update_category_enum_matches_expense_category_enum(self):
-        schema_enums = set(
-            expenses.UPDATE_DEFINITION["function"]["parameters"]["properties"]["changes"]["properties"]["category"]["enum"]
-        )
-        self.assertEqual(schema_enums, {cat.value for cat in ExpenseCategory})
-
-    def test_validate_category_case_insensitive(self):
-        payload = models.build_create_payload({"title": "Coffee", "amount": 4.5, "category": "food"})
-        self.assertEqual(payload["category"], "Food")
-        payload2 = models.build_create_payload({"title": "KFC", "amount": 200, "category": "FAST FOOD"})
-        self.assertEqual(payload2["category"], "Fast Food")
-
-    def test_validate_category_rejects_unsupported_value(self):
+    def test_category_validation_uses_the_supplied_category_list(self):
         with self.assertRaises(ExpenseValidationError):
-            models.build_create_payload({"title": "Coffee", "amount": 4.5, "category": "Bills"})
-
-    def test_validate_category_rejects_unsupported_in_update(self):
-        with self.assertRaises(ExpenseValidationError):
-            models.build_update_payload({"category": "Transport"})
+            models.build_update_payload({"category": "Transport"}, ["Food"])
 
 
 # --------------------------------------------------------------------------- #
@@ -281,6 +284,29 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(recorder.requests[0].content)["title"], "Coffee")
         self.assertEqual(expense.title, "Coffee")
 
+    async def test_list_categories_uses_documented_route_and_response(self):
+        recorder = Recorder()
+        recorder.respond = lambda request: httpx.Response(
+            200, json={"data": {"categories": ["Food", "Fast Food"]}}
+        )
+        async with make_client(recorder) as client:
+            categories = await client.list_categories()
+        self.assertTrue(recorder.requests[0].url.path.endswith("/api/v1/expenses/categories"))
+        self.assertEqual(categories, ["Food", "Fast Food"])
+
+    async def test_bulk_upsert_posts_documented_body_and_parses_result(self):
+        recorder = Recorder()
+        recorder.respond = lambda request: httpx.Response(
+            201, json={"created": 1, "updated": 1, "expenses": [expense_json()]}
+        )
+        async with make_client(recorder) as client:
+            result = await client.bulk_upsert_expenses([
+                {"title": "Coffee", "amount": 4.5, "category": "Food"}
+            ])
+        self.assertTrue(recorder.requests[0].url.path.endswith("/api/v1/expenses/bulk-upsert"))
+        self.assertEqual(json.loads(recorder.requests[0].content)["expenses"][0]["title"], "Coffee")
+        self.assertEqual(result["created"], 1)
+
     async def test_list_current_month_sends_no_filters(self):
         recorder = Recorder()
         recorder.respond = lambda request: httpx.Response(200, json=[expense_json()])
@@ -311,7 +337,9 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
             200, json=[{"category": "Food", "total": 2480}, {"category": "Bills", "total": 3000}]
         )
         async with make_client(recorder) as client:
-            result = await client.list_expenses({"groupBy": "category"})
+            result = await client.list_expenses(
+                {"startDate": "2026-07-01", "endDate": "2026-07-31", "groupBy": "category"}
+            )
         self.assertEqual(recorder.requests[0].url.params.get("groupBy"), "category")
         self.assertEqual(result["groups"][0], {"category": "Food", "total": 2480.0})
 
@@ -410,8 +438,13 @@ class ToolHandlerTests(unittest.IsolatedAsyncioTestCase):
         state.clear()
         self.addCleanup(state.clear)
 
-    def use_client(self, recorder):
+    def use_client(self, recorder, *, stub_categories=True):
         client = make_client(recorder)
+        if stub_categories:
+            async def list_categories():
+                return ["Food", "Fast Food", "Transportation", "Health & Fitness", "Miscellaneous"]
+
+            client.list_categories = list_categories
         patcher = patch("src.expenses.tools.get_client", return_value=client)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -428,16 +461,43 @@ class ToolHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(recorder.requests[0].content)["category"], "Food")
         self.assertIn("Added", result["formatted"])
 
-    async def test_create_expense_without_category_sends_no_category(self):
+    async def test_bulk_upsert_expenses_returns_api_counts(self):
         recorder = Recorder()
-        recorder.respond = lambda request: httpx.Response(201, json=expense_json(category=None))
+        recorder.respond = lambda request: httpx.Response(
+            201, json={"created": 2, "updated": 0, "expenses": [expense_json()]}
+        )
+        self.use_client(recorder)
+
+        result = await expenses.bulk_upsert_expenses(
+            '{"expenses": [{"title": "Coffee", "amount": 4.5, "category": "Food"}, '
+            '{"title": "Bus fare", "amount": 20, "category": "Transportation"}]}'
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["created"], 2)
+        self.assertIn("added 2 expenses", result["formatted"])
+
+    async def test_list_expense_categories_returns_api_categories(self):
+        recorder = Recorder()
+        recorder.respond = lambda request: httpx.Response(
+            200, json={"data": {"categories": ["Food", "Fast Food"]}}
+        )
+        self.use_client(recorder, stub_categories=False)
+
+        result = await expenses.list_expense_categories("{}")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["categories"], ["Food", "Fast Food"])
+
+    async def test_create_expense_without_category_rejects_without_api_call(self):
+        recorder = Recorder()
         self.use_client(recorder)
 
         result = await expenses.create_expense('{"title": "Coffee", "amount": 4.5}')
 
-        self.assertTrue(result["ok"])
-        body = json.loads(recorder.requests[0].content)
-        self.assertNotIn("category", body)
+        self.assertFalse(result["ok"])
+        self.assertIn("category", result["error"])
+        self.assertEqual(recorder.requests, [])
 
     async def test_create_expense_with_canonical_category_sends_it(self):
         recorder = Recorder()
@@ -632,7 +692,10 @@ class OptionalIntegrationTests(unittest.TestCase):
             reloaded = self._reload(registry)
 
         names = [d["function"]["name"] for d in reloaded.TOOL_DEFINITIONS]
-        for tool in ("create_expense", "list_expenses", "delete_expense"):
+        for tool in (
+            "create_expense", "bulk_upsert_expenses", "list_expense_categories",
+            "list_expenses", "delete_expense",
+        ):
             self.assertIn(tool, names)
             self.assertIn(tool, reloaded.TOOL_EXECUTORS)
 
