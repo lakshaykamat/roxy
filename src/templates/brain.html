@@ -1,9 +1,26 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Roxy Brain</title></head>
-<body><main><h1>Saved items</h1><form action="/brain" method="get"><input name="query" type="search" placeholder="Search saved items" value="{{query}}"><button type="submit">SEARCH</button></form><ul>{{items}}</ul><section>{{details}}</section></main>
-<script>
-document.querySelectorAll('[data-select-item]').forEach(button => button.addEventListener('click', () => document.querySelectorAll('[data-item-detail]').forEach(detail => detail.hidden = detail.dataset.itemId !== button.dataset.selectItem)));
-async function action(url, options) { const response = await fetch(url, options); if (response.ok) window.location.reload(); }
-document.querySelectorAll('[data-archive-item]').forEach(button => button.addEventListener('click', () => action(`/brain/items/${button.dataset.archiveItem}/archive`, {method: 'POST'})));
-document.querySelectorAll('[data-delete-item]').forEach(button => button.addEventListener('click', () => action(`/brain/items/${button.dataset.deleteItem}/delete`, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({confirmed: true, title: button.dataset.deleteTitle})})));
-</script></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101827">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <title>My brain · Roxy</title>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <header class="topbar"><a class="brand" href="/"><span>R</span>Roxy</a><nav aria-label="Primary"><a href="/">Dashboard</a><a class="is-active" href="/brain">My brain</a></nav></header>
+  <main class="page page--brain" id="main-content">
+    <header class="page-heading"><div><p class="eyebrow">Connected memory</p><h1>My brain</h1><p>Items connect when they share a tag or type.</p></div><form class="search-form" action="/brain" method="get"><label class="sr-only" for="brain-search">Search saved items</label><input id="brain-search" name="query" type="search" placeholder="Search saved items" value="{{query}}"><button class="button" type="submit">Search</button></form></header>
+    <section class="brain-workspace" aria-label="Brain explorer"><div class="graph-panel"><div class="graph-label"><span aria-hidden="true"></span><p>Roxy Brain</p><small>Click a node to inspect it</small></div>{{graph}}</div><aside class="item-panel"><h2>Saved items</h2><ul class="brain-list">{{items}}</ul></aside><section class="details-panel" aria-live="polite"><h2 class="sr-only">Item details</h2>{{details}}</section></section>
+  </main>
+  <script>
+    const selectItem = (id) => document.querySelectorAll('[data-item-detail]').forEach((detail) => { detail.hidden = detail.dataset.itemId !== id; });
+    document.querySelectorAll('[data-select-item]').forEach((item) => item.addEventListener('click', () => selectItem(item.dataset.selectItem)));
+    document.querySelectorAll('.brain-node').forEach((node) => node.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectItem(node.dataset.selectItem); } }));
+    async function action(url, options) { const response = await fetch(url, options); if (response.ok) window.location.reload(); }
+    document.querySelectorAll('[data-archive-item]').forEach((button) => button.addEventListener('click', () => action(`/brain/items/${button.dataset.archiveItem}/archive`, {method: 'POST'})));
+    document.querySelectorAll('[data-delete-item]').forEach((button) => button.addEventListener('click', () => action(`/brain/items/${button.dataset.deleteItem}/delete`, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({confirmed: true, title: button.dataset.deleteTitle})})));
+  </script>
+</body>
+</html>

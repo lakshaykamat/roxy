@@ -1,3 +1,9 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Roxy dashboard</title></head>
-<body><main><h1>Roxy dashboard</h1><p>Updated: {{generated_at}}</p><section><h2>Activity</h2><dl>{{activity_rows}}</dl></section><section><h2>Configuration</h2><dl>{{configuration}}</dl></section><section><h2>Tasks and reminders</h2><dl>{{queue_rows}}</dl><h3>Upcoming reminders</h3><ul>{{upcoming}}</ul><h3>Failed deliveries</h3><ul>{{failures}}</ul></section></main></body></html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#101827"><link rel="stylesheet" href="/assets/styles.css"><title>Dashboard · Roxy</title></head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <header class="topbar"><a class="brand" href="/"><span>R</span>Roxy</a><nav aria-label="Primary"><a class="is-active" href="/">Dashboard</a><a href="/brain">My brain</a></nav></header>
+  <main class="page" id="main-content"><header class="page-heading"><div><p class="eyebrow">Personal operating system</p><h1>Dashboard</h1><p>Updated {{generated_at}}</p></div><a class="button" href="/brain">Open my brain</a></header><div class="dashboard-grid"><section class="surface"><h2>Activity</h2><dl>{{activity_rows}}</dl></section><section class="surface"><h2>Tasks and reminders</h2><dl>{{queue_rows}}</dl><h3>Upcoming reminders</h3><ul class="record-list">{{upcoming}}</ul><h3>Failed deliveries</h3><ul class="record-list">{{failures}}</ul></section><section class="surface surface--wide"><h2>Configuration</h2><dl class="configuration-list">{{configuration}}</dl></section></div></main>
+</body>
+</html>
