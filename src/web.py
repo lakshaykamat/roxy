@@ -143,7 +143,7 @@ def render_dashboard(snapshot: dict[str, object]) -> str:
     })
 
 
-def render_brain_explorer(snapshot: dict[str, object]) -> str:
+def render_brain_explorer(snapshot: dict[str, object], query: str = "") -> str:
     items = snapshot["items"]
     item_markup = "".join(
         '<li class="border-b border-line px-3 py-3" data-brain-item '
@@ -160,15 +160,22 @@ def render_brain_explorer(snapshot: dict[str, object]) -> str:
         + f'<button data-delete-item="{_text(item["id"])}" data-delete-title="{_text(item["title"])}" type="button">DELETE</button></article>'
         for index, item in enumerate(items)
     ) or '<p class="text-xs">No saved items.</p>'
-    return render_template("brain.html", {"items": item_markup, "details": details})
+    return render_template(
+        "brain.html",
+        {"items": item_markup, "details": details, "query": _text(query)},
+    )
 
 
 def load_snapshot() -> dict[str, object] | None:
     return try_catch(dashboard.get_dashboard_snapshot, handle_error=lambda _: None, exception_types=sqlite3.Error)
 
 
-def load_brain_snapshot() -> dict[str, object] | None:
-    return try_catch(dashboard.get_brain_snapshot, handle_error=lambda _: None, exception_types=sqlite3.Error)
+def load_brain_snapshot(query: str | None = None) -> dict[str, object] | None:
+    return try_catch(
+        lambda: dashboard.get_brain_snapshot(query),
+        handle_error=lambda _: None,
+        exception_types=sqlite3.Error,
+    )
 
 
 @app.get("/")
@@ -188,18 +195,22 @@ async def dashboard_data(request: Request):
 
 
 @app.get("/brain")
-async def brain_page(request: Request):
+async def brain_page(request: Request, query: str | None = None):
     if redirect := dashboard_redirect(request):
         return redirect
-    snapshot = load_brain_snapshot()
-    return HTMLResponse(render_brain_explorer(snapshot)) if snapshot else HTMLResponse(render_template("unavailable.html", {}), status_code=503)
+    snapshot = load_brain_snapshot(query)
+    return (
+        HTMLResponse(render_brain_explorer(snapshot, query or ""))
+        if snapshot
+        else HTMLResponse(render_template("unavailable.html", {}), status_code=503)
+    )
 
 
 @app.get("/brain-data")
-async def brain_data(request: Request):
+async def brain_data(request: Request, query: str | None = None):
     if redirect := dashboard_redirect(request):
         return redirect
-    snapshot = load_brain_snapshot()
+    snapshot = load_brain_snapshot(query)
     return JSONResponse(snapshot) if snapshot else JSONResponse({"status": "unavailable"}, status_code=503)
 
 

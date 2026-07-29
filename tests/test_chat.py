@@ -130,6 +130,30 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         add.assert_called_once_with("assistant", reply)
         send_reply.assert_awaited_once_with(7, reply)
 
+    async def test_process_burst_answers_clear_recall_without_calling_the_model(self):
+        send_reply = AsyncMock()
+
+        with patch("src.handlers.chat.history.add") as add, patch(
+            "src.handlers.chat.recall.reply_for", return_value="Here's what I found."
+        ) as recall_reply, patch("src.handlers.chat.run_agent_loop", new=AsyncMock()) as run_agent_loop:
+            await chat.process_burst(7, [PendingMessage(1, "What did I save about SQLite?", send_reply)])
+
+        recall_reply.assert_called_once_with("What did I save about SQLite?")
+        run_agent_loop.assert_not_awaited()
+        send_reply.assert_awaited_once_with(7, "Here's what I found.")
+        add.assert_called_once_with("assistant", "Here's what I found.")
+
+    async def test_process_burst_does_not_search_brain_for_ordinary_chat(self):
+        send_reply = AsyncMock()
+
+        with patch("src.handlers.chat.history.add"), patch(
+            "src.handlers.chat.recall.reply_for", return_value=None
+        ) as recall_reply, patch(
+            "src.handlers.chat.run_agent_loop", new=AsyncMock(return_value="Hello!")):
+            await chat.process_burst(7, [PendingMessage(1, "How are you?", send_reply)])
+
+        recall_reply.assert_called_once_with("How are you?")
+
     def test_build_burst_messages_places_current_time_after_history(self):
         pending_messages = [PendingMessage(4, "First thought", AsyncMock())]
         previous_messages = [{"role": "assistant", "content": "Earlier reply"}]

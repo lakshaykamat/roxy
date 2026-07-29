@@ -37,6 +37,7 @@ from src.handlers.commands import (
     start,
 )
 from src.core.errors import try_async
+from src.knowledge.indexing import source_indexer
 from src.web import app as web_app
 from src.expenses import client as expense_tracker_client
 
@@ -167,6 +168,7 @@ async def run() -> None:
         server = uvicorn.Server(
             uvicorn.Config(web_app, host="0.0.0.0", port=config.HTTP_PORT, workers=1)
         )
+        await source_indexer.start()
         await _start_telegram_polling(telegram_app)
         telegram_started = True
         await _serve_http(server)
@@ -183,6 +185,7 @@ async def run() -> None:
                 application_started=True,
                 polling_started=True,
             )
+        await source_indexer.stop()
         await _shutdown_application_resources()
         logger.info("Application shutdown complete")
 

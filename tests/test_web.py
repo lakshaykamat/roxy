@@ -44,3 +44,12 @@ class WebTests(unittest.TestCase):
 
     def test_brain_data_requires_login(self):
         self.assertEqual(TestClient(app).get("/brain-data", follow_redirects=False).status_code, 303)
+
+    def test_brain_page_passes_search_query_to_shared_retrieval_flow(self):
+        snapshot = {"items": []}
+        with patch("src.web.load_brain_snapshot", return_value=snapshot) as load_brain_snapshot:
+            response = self.authenticated_client().get("/brain?query=SQLite")
+
+        self.assertEqual(response.status_code, 200)
+        load_brain_snapshot.assert_called_once_with("SQLite")
+        self.assertIn('value="SQLite"', response.text)

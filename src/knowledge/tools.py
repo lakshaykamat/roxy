@@ -7,6 +7,8 @@ import sqlite3
 from src.core.errors import retry_async, try_async
 from src.knowledge import brain_store
 from src.knowledge.constants import BRAIN_ITEM_TYPES
+from src.knowledge.indexing import enqueue_source_item
+from src.knowledge import retrieval
 from src.knowledge.web_research import search_web
 
 logger = logging.getLogger(__name__)
@@ -167,6 +169,8 @@ async def save_brain_item(
             error_message="Unable to save brain item", exception_types=sqlite3.OperationalError,
             should_retry=_is_busy_or_locked,
         )
+        if item.source_status == "pending":
+            enqueue_source_item(item.id)
         return {"ok": True, "brain_item": {"id": item.id, "title": item.title, "item_type": item.item_type}}
 
     async def failure(error: BaseException) -> dict[str, object]:
@@ -189,10 +193,12 @@ async def capture_brain_content(arguments: str) -> dict[str, object]:
             "capture", "explicit",
         )]
         for url in urls:
-            items.append(await asyncio.to_thread(
+            item = await asyncio.to_thread(
                 brain_store.save_item, url, url, "Saved link", "reference", [],
                 "capture", "explicit", source_url=url,
-            ))
+            )
+            items.append(item)
+            enqueue_source_item(item.id)
         return {"ok": True, "brain_items": [{"id": item.id, "title": item.title} for item in items]}
 
     return await try_async(capture, handle_error=_async_failure)
@@ -204,7 +210,7 @@ async def search_saved_items(arguments: str) -> dict[str, object]:
         item_type = values.get("item_type")
         if item_type is not None and (not isinstance(item_type, str) or item_type not in ITEM_TYPES):
             raise ValueError("Unsupported brain item type.")
-        items = await asyncio.to_thread(brain_store.search_items, _text(values, "query"), 20, item_type)
+        items = await asyncio.to_thread(retrieval.search, _text(values, "query"), 5, item_type)
         results = [
             {
                 "id": item.id,

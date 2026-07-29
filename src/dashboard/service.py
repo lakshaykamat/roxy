@@ -4,6 +4,7 @@ from typing import Literal
 
 from src import config
 from src.knowledge import brain_store
+from src.knowledge import retrieval
 from src.knowledge.constants import BRAIN_ITEM_TYPES
 from src.core.database import read_only_database_connection
 from src.conversations.history import format_timestamp
@@ -39,7 +40,8 @@ def _source_state(item: brain_store.BrainItem) -> str:
     return "saved"
 
 
-def get_brain_snapshot() -> dict[str, object]:
+def get_brain_snapshot(query: str | None = None) -> dict[str, object]:
+    items = retrieval.search(query) if query and query.strip() else brain_store.list_recent_items(limit=100)
     return {
         "items": [
             {
@@ -58,7 +60,7 @@ def get_brain_snapshot() -> dict[str, object]:
                     else None
                 ),
             }
-            for item in brain_store.list_recent_items(limit=100)
+            for item in items
         ]
     }
 

@@ -1,8 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Roxy Brain</title></head>
-<body><main><h1>Saved items</h1><input id="brain-filter" type="search" placeholder="Filter saved items"><ul>{{items}}</ul><section>{{details}}</section></main>
+<body><main><h1>Saved items</h1><form action="/brain" method="get"><input name="query" type="search" placeholder="Search saved items" value="{{query}}"><button type="submit">SEARCH</button></form><ul>{{items}}</ul><section>{{details}}</section></main>
 <script>
-document.querySelector('#brain-filter').addEventListener('input', event => document.querySelectorAll('[data-brain-item]').forEach(item => item.hidden = !item.dataset.search.toLowerCase().includes(event.target.value.toLowerCase())));
 document.querySelectorAll('[data-select-item]').forEach(button => button.addEventListener('click', () => document.querySelectorAll('[data-item-detail]').forEach(detail => detail.hidden = detail.dataset.itemId !== button.dataset.selectItem)));
 async function action(url, options) { const response = await fetch(url, options); if (response.ok) window.location.reload(); }
 document.querySelectorAll('[data-archive-item]').forEach(button => button.addEventListener('click', () => action(`/brain/items/${button.dataset.archiveItem}/archive`, {method: 'POST'})));

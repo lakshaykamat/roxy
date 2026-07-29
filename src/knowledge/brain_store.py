@@ -275,8 +275,18 @@ def list_recent_items(limit: int = 20) -> list[BrainItem]:
     return [brain_item_from_row(row) for row in rows]
 
 
-def list_active_items(limit: int = 100) -> list[BrainItem]:
-    return list_recent_items(limit)
+def list_active_items(limit: int | None = 100) -> list[BrainItem]:
+    with _brain_database() as connection:
+        if limit is None:
+            rows = connection.execute(
+                "SELECT * FROM brain_items WHERE status = 'active' ORDER BY created_at DESC, id DESC"
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                "SELECT * FROM brain_items WHERE status = 'active' ORDER BY created_at DESC, id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+    return [brain_item_from_row(row) for row in rows]
 
 
 def search_items(query: str, limit: int = 20, item_type: str | None = None) -> list[BrainItem]:
@@ -292,6 +302,56 @@ def search_items(query: str, limit: int = 20, item_type: str | None = None) -> l
             (search_query, item_type, item_type, limit),
         ).fetchall()
     return [brain_item_from_row(row) for row in rows]
+
+
+def list_pending_source_ids() -> list[int]:
+    with _brain_database() as connection:
+        rows = connection.execute(
+            "SELECT id FROM brain_items WHERE source_url IS NOT NULL AND source_status = 'pending'"
+        ).fetchall()
+    return [row["id"] for row in rows]
+
+
+def mark_source_unavailable(item_id: int) -> bool:
+    with _brain_database() as connection:
+        cursor = connection.execute(
+            "UPDATE brain_items SET source_status = 'unavailable', updated_at = ? "
+            "WHERE id = ? AND source_url IS NOT NULL AND source_status = 'pending'",
+            (format_timestamp(utc_now()), item_id),
+        )
+    return cursor.rowcount == 1
+
+
+def update_source_metadata(item_id: int, title: str | None, summary: str | None) -> bool:
+    with _brain_database() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE brain_items
+            SET title = CASE
+                    WHEN (title = '' OR title = source_url) AND ? IS NOT NULL THEN ?
+                    ELSE title
+                END,
+                summary = CASE
+                    WHEN (summary = '' OR summary = 'Saved link') AND ? IS NOT NULL THEN ?
+                    ELSE summary
+                END,
+                source_status = 'ready',
+                updated_at = ?
+            WHERE id = ? AND source_url IS NOT NULL AND source_status = 'pending'
+            """,
+            (title, title, summary, summary, format_timestamp(utc_now()), item_id),
+        )
+    return cursor.rowcount == 1
+
+
+def retry_source(item_id: int) -> bool:
+    with _brain_database() as connection:
+        cursor = connection.execute(
+            "UPDATE brain_items SET source_status = 'pending', updated_at = ? "
+            "WHERE id = ? AND source_url IS NOT NULL AND source_status = 'unavailable'",
+            (format_timestamp(utc_now()), item_id),
+        )
+    return cursor.rowcount == 1
 
 
 def archive_item(item_id: int) -> bool:

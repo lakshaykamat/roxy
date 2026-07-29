@@ -18,7 +18,7 @@ from src.agent.tool_registry import (
 from src.core.debounce import DebounceCoordinator, PendingMessage
 from src.core.errors import log_async_error, retry_async, try_async
 from src.conversations import history
-from src.knowledge import brain_store
+from src.knowledge import recall
 from src.core.llm import ask_llm
 from src.core.transcription import transcribe_voice
 
@@ -131,6 +131,11 @@ async def process_burst(chat_id: int, pending_messages: list[PendingMessage]) ->
     send_reply = pending_messages[-1].send_reply
 
     async def create_reply() -> str:
+        recall_reply = await asyncio.to_thread(
+            recall.reply_for, "\n".join(message.text for message in pending_messages)
+        )
+        if recall_reply is not None:
+            return recall_reply
         return await run_agent_loop(
             build_burst_messages(pending_messages),
             capture_key=f"telegram:{chat_id}:{pending_messages[0].id}:{pending_messages[-1].id}",
