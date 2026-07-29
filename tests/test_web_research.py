@@ -54,6 +54,18 @@ class WebResearchTests(unittest.TestCase):
 
         self.assertCountEqual(contents, ["save this project note", "https://example.com"])
 
+    def test_capture_keeps_unreadable_url_as_pending_bookmark(self):
+        asyncio.run(tools.capture_brain_content(
+            '{"request":"save this link", "urls":["https://unreadable.example"]}'
+        ))
+
+        saved_url = next(
+            item for item in brain_store.list_recent_items()
+            if item.source_url == "https://unreadable.example"
+        )
+        self.assertEqual(saved_url.content, "https://unreadable.example")
+        self.assertEqual(saved_url.source_status, "pending")
+
     def test_web_research_intent_exposes_only_web_search(self):
         self.assertEqual(
             tool_definitions_for_intent("web_research"),

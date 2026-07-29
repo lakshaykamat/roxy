@@ -48,6 +48,39 @@ class BrainStoreTests(unittest.TestCase):
 
         self.assertEqual(brain_store.get_item(item.id).title, "Memory")
 
+    def test_new_url_save_preserves_original_content_and_marks_it_pending(self):
+        item = brain_store.save_item(
+            "https://example.com/article?source=roxy",
+            "Article",
+            "Saved link",
+            "reference",
+            [],
+            "capture",
+            "explicit",
+            source_url="https://example.com/article?source=roxy",
+        )
+
+        self.assertEqual(item.content, "https://example.com/article?source=roxy")
+        self.assertEqual(item.source_url, "https://example.com/article?source=roxy")
+        self.assertEqual(item.source_status, "pending")
+
+    def test_non_url_save_has_no_source_status(self):
+        item = brain_store.save_item("Keep focus", "Focus", "Keep focus", "goal", [], "text", "explicit")
+
+        self.assertIsNone(item.source_status)
+
+    def test_archiving_url_item_preserves_source_fields(self):
+        item = brain_store.save_item(
+            "https://example.com", "Example", "Saved link", "reference", [], "capture", "explicit",
+            source_url="https://example.com",
+        )
+
+        self.assertTrue(brain_store.archive_item(item.id))
+        archived_item = brain_store.get_item(item.id)
+
+        self.assertEqual(archived_item.source_url, "https://example.com")
+        self.assertEqual(archived_item.source_status, "pending")
+
     def test_deleting_item_removes_scheduled_deliveries(self):
         task = tasks.create_task("Pay rent", "2099-01-02T19:00:00+05:30")
 

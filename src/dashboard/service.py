@@ -8,13 +8,14 @@ from src.knowledge.constants import BRAIN_ITEM_TYPES
 from src.core.database import read_only_database_connection
 from src.conversations.history import format_timestamp
 
+DELIVERY_FAILURE_MESSAGE = "Delivery failed. Check service logs for details."
+MESSAGE_ROLE_COUNTS = {"assistant": 0, "user": 0}
+TASK_STATUS_COUNTS = {"active": 0, "completed": 0, "cancelled": 0}
+DELIVERY_STATUS_COUNTS = {"pending": 0, "leased": 0, "delivered": 0, "failed": 0}
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def sanitize_error(value: str | None, limit: int = 160) -> str:
-    return "Delivery failed. Check service logs for details."[:limit]
 
 
 def _count_by_value(
@@ -39,10 +40,8 @@ def _source_state(item: brain_store.BrainItem) -> str:
 
 
 def get_brain_snapshot() -> dict[str, object]:
-    items = brain_store.list_recent_items(limit=100)
-    records: list[dict[str, object]] = []
-    for item in items:
-        records.append(
+    return {
+        "items": [
             {
                 "id": item.id,
                 "title": item.title,
@@ -50,6 +49,7 @@ def get_brain_snapshot() -> dict[str, object]:
                 "item_type": item.item_type,
                 "tags": item.tags,
                 "source_url": item.source_url,
+                "source_status": item.source_status,
                 "source_state": _source_state(item),
                 "captured_at": item.created_at.isoformat(),
                 "source_published_at": (
@@ -58,8 +58,9 @@ def get_brain_snapshot() -> dict[str, object]:
                     else None
                 ),
             }
-        )
-    return {"items": records}
+            for item in brain_store.list_recent_items(limit=100)
+        ]
+    }
 
 
 def archive_brain_item(item_id: int) -> bool:
@@ -73,7 +74,6 @@ def delete_brain_item(item_id: int, title: str) -> Literal["deleted", "mismatch"
 def get_dashboard_snapshot(now: datetime | None = None) -> dict[str, object]:
     current_time = (now or utc_now()).astimezone(timezone.utc)
     cutoff = format_timestamp(current_time - timedelta(days=1))
-    seven_days_from_now = format_timestamp(current_time + timedelta(days=7))
     current_timestamp = format_timestamp(current_time)
 
     with read_only_database_connection() as connection:
@@ -93,41 +93,51 @@ def get_dashboard_snapshot(now: datetime | None = None) -> dict[str, object]:
             if message_exists else None
         )
         message_roles = _count_by_value(
-            connection, "SELECT role AS value, COUNT(*) AS count FROM messages GROUP BY role",
-            {"assistant": 0, "user": 0},
-        ) if message_exists else {"assistant": 0, "user": 0}
-        empty_memory_kinds = {
-            kind: 0 for kind in sorted(BRAIN_ITEM_TYPES - {"task"})
-        }
+            connection,
+            "SELECT role AS value, COUNT(*) AS count FROM messages GROUP BY role",
+            MESSAGE_ROLE_COUNTS,
+        ) if message_exists else MESSAGE_ROLE_COUNTS.copy()
+        empty_memory_kinds = {kind: 0 for kind in sorted(BRAIN_ITEM_TYPES - {"task"})}
         memory_kinds = _count_by_value(
-            connection, "SELECT item_type AS value, COUNT(*) AS count FROM brain_items WHERE item_type != 'task' GROUP BY item_type",
+            connection,
+            "SELECT item_type AS value, COUNT(*) AS count FROM brain_items "
+            "WHERE item_type != 'task' GROUP BY item_type",
             empty_memory_kinds,
         ) if brain_exists else empty_memory_kinds
         memory_total = sum(memory_kinds.values())
         expiring_memories = 0
         task_statuses = _count_by_value(
-            connection, "SELECT status AS value, COUNT(*) AS count FROM brain_items WHERE item_type = 'task' GROUP BY status",
-            {"active": 0, "completed": 0, "cancelled": 0},
-        ) if brain_exists else {"active": 0, "completed": 0, "cancelled": 0}
+            connection,
+            "SELECT status AS value, COUNT(*) AS count FROM brain_items "
+            "WHERE item_type = 'task' GROUP BY status",
+            TASK_STATUS_COUNTS,
+        ) if brain_exists else TASK_STATUS_COUNTS.copy()
         reminder_statuses = _count_by_value(
-            connection, "SELECT status AS value, COUNT(*) AS count FROM scheduled_deliveries GROUP BY status",
-            {"pending": 0, "leased": 0, "delivered": 0, "failed": 0},
-        ) if delivery_exists else {"pending": 0, "leased": 0, "delivered": 0, "failed": 0}
+            connection,
+            "SELECT status AS value, COUNT(*) AS count FROM scheduled_deliveries GROUP BY status",
+            DELIVERY_STATUS_COUNTS,
+        ) if delivery_exists else DELIVERY_STATUS_COUNTS.copy()
         overdue_pending = connection.execute(
-            "SELECT COUNT(*) FROM scheduled_deliveries WHERE status = 'pending' AND scheduled_at < ?",
+            "SELECT COUNT(*) FROM scheduled_deliveries "
+            "WHERE status = 'pending' AND scheduled_at < ?",
             (current_timestamp,),
         ).fetchone()[0] if delivery_exists else 0
         upcoming_rows = connection.execute(
-            "SELECT brain_items.title, scheduled_deliveries.scheduled_at, brain_items.recurrence_rule "
-            "FROM scheduled_deliveries JOIN brain_items ON brain_items.id = scheduled_deliveries.brain_item_id "
-            "WHERE scheduled_deliveries.status = 'pending' AND scheduled_deliveries.scheduled_at >= ? "
+            "SELECT brain_items.title, scheduled_deliveries.scheduled_at, "
+            "brain_items.recurrence_rule FROM scheduled_deliveries "
+            "JOIN brain_items ON brain_items.id = scheduled_deliveries.brain_item_id "
+            "WHERE scheduled_deliveries.status = 'pending' "
+            "AND scheduled_deliveries.scheduled_at >= ? "
             "ORDER BY scheduled_deliveries.scheduled_at, scheduled_deliveries.id LIMIT 5",
             (current_timestamp,),
         ).fetchall() if delivery_exists and brain_exists else []
         failure_rows = connection.execute(
-            "SELECT brain_items.title, scheduled_deliveries.updated_at, scheduled_deliveries.attempt_count, scheduled_deliveries.last_error "
-            "FROM scheduled_deliveries JOIN brain_items ON brain_items.id = scheduled_deliveries.brain_item_id "
-            "WHERE scheduled_deliveries.status = 'failed' ORDER BY scheduled_deliveries.updated_at DESC, scheduled_deliveries.id DESC LIMIT 5"
+            "SELECT brain_items.title, scheduled_deliveries.updated_at, "
+            "scheduled_deliveries.attempt_count, scheduled_deliveries.last_error "
+            "FROM scheduled_deliveries "
+            "JOIN brain_items ON brain_items.id = scheduled_deliveries.brain_item_id "
+            "WHERE scheduled_deliveries.status = 'failed' "
+            "ORDER BY scheduled_deliveries.updated_at DESC, scheduled_deliveries.id DESC LIMIT 5"
         ).fetchall() if delivery_exists and brain_exists else []
 
     return {
@@ -170,7 +180,7 @@ def get_dashboard_snapshot(now: datetime | None = None) -> dict[str, object]:
                     "title": row["title"],
                     "updated_at": row["updated_at"],
                     "attempt_count": row["attempt_count"],
-                    "error": sanitize_error(row["last_error"]),
+                    "error": DELIVERY_FAILURE_MESSAGE,
                 }
                 for row in failure_rows
             ],
