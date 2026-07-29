@@ -12,9 +12,8 @@ class DocumentationTests(unittest.TestCase):
 
     def test_readme_documents_brain_privacy_controls(self):
         readme = Path("README.md").read_text()
-        self.assertIn("Pause brain", readme)
         self.assertIn("Tasks are brain items", readme)
         self.assertIn("My brain", readme)
-        self.assertIn("stored thought connections", readme)
+        self.assertIn("active saved items", readme)
         self.assertIn("exact active title", readme)
-        self.assertIn("3:00 AM", readme)
+        self.assertIn("scheduled deliveries", readme)

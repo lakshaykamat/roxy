@@ -75,7 +75,7 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(tasks.list_active_tasks(), [])
         with tasks.database_connection() as connection:
             statuses = connection.execute(
-                "SELECT status FROM reminder_deliveries ORDER BY id"
+                "SELECT status FROM scheduled_deliveries ORDER BY id"
             ).fetchall()
         self.assertEqual([row["status"] for row in statuses], ["failed", "failed"])
 
@@ -102,7 +102,7 @@ class TaskTests(unittest.TestCase):
             updated_task.next_due_at, datetime(2099, 1, 3, 3, 30, tzinfo=timezone.utc)
         )
         with tasks.database_connection() as connection:
-            reminder = connection.execute("SELECT * FROM reminder_deliveries WHERE brain_item_id = ?", (task.id,)).fetchall()
+            reminder = connection.execute("SELECT * FROM scheduled_deliveries WHERE brain_item_id = ?", (task.id,)).fetchall()
         self.assertEqual(len(reminder), 2)
         self.assertEqual(reminder[-1]["status"], "pending")
 
@@ -171,7 +171,7 @@ class TaskTests(unittest.TestCase):
         )
 
         with tasks.database_connection() as connection:
-            status = connection.execute("SELECT status FROM reminder_deliveries").fetchone()["status"]
+            status = connection.execute("SELECT status FROM scheduled_deliveries").fetchone()["status"]
         self.assertEqual(status, "failed")
 
     def test_claim_uses_configured_lease_duration(self):
@@ -194,5 +194,5 @@ class TaskTests(unittest.TestCase):
             )
 
         with tasks.database_connection() as connection:
-            status = connection.execute("SELECT status FROM reminder_deliveries").fetchone()["status"]
+            status = connection.execute("SELECT status FROM scheduled_deliveries").fetchone()["status"]
         self.assertEqual(status, "failed")

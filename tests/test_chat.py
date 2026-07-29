@@ -54,26 +54,6 @@ class TranscriptionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ChatTests(unittest.IsolatedAsyncioTestCase):
-    def test_brain_context_includes_source_and_relation_details(self):
-        source = SimpleNamespace(
-            id=4, content="Roadmap", source_url="https://example.com/roadmap",
-            source_published_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
-            created_at=datetime(2026, 7, 2, tzinfo=timezone.utc),
-        )
-        with patch("src.handlers.chat.brain_store.search_items", return_value=[source]), patch(
-            "src.handlers.chat.brain_store.get_item_capture_context",
-            return_value={
-                "summary": "Roadmap analysis",
-                "captured_at": None,
-                "relations": [{"relation_type": "supports", "explanation": "Supports the project."}],
-            },
-        ):
-            context = chat.build_brain_context("roadmap")
-
-        self.assertIn("Source: https://example.com/roadmap", context)
-        self.assertIn("Captured: 2026-07-02T00:00:00+00:00", context)
-        self.assertIn("Published: 2026-07-01T00:00:00+00:00", context)
-        self.assertIn("supports: Supports the project.", context)
     def test_system_prompt_requests_short_plain_language(self):
         self.assertIn("casual, friendly female", chat.SYSTEM_PROMPT)
         self.assertIn("warm, chill, and a little playful", chat.SYSTEM_PROMPT)
@@ -457,7 +437,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
     def test_saved_titles_from_capture_result_returns_each_title(self):
         titles = chat.saved_titles_from_tool_result(
             "capture_brain_content",
-            {"capture": {"titles": ["First link", "Second link", 3]}},
+            {"brain_items": [{"title": "First link"}, {"title": "Second link"}, {"title": 3}]},
         )
 
         self.assertEqual(titles, ["First link", "Second link"])

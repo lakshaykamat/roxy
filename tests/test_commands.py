@@ -61,8 +61,6 @@ class CommandTests(unittest.TestCase):
             [
                 commands.TASKS_BUTTON_TEXT,
                 commands.BRAIN_BUTTON_TEXT,
-                commands.PAUSE_BRAIN_BUTTON_TEXT,
-                commands.RESUME_BRAIN_BUTTON_TEXT,
                 commands.EXPORT_DATA_BUTTON_TEXT,
                 commands.DELETE_DATA_BUTTON_TEXT,
                 commands.HELP_BUTTON_TEXT,
@@ -161,12 +159,6 @@ class CommandTests(unittest.TestCase):
         update.callback_query.edit_message_text.assert_awaited_once_with(
             "You don't have any active tasks.", reply_markup=None
         )
-
-    def test_brain_pause_disables_capture(self):
-        self.assertEqual(commands.brain_pause_response(), "Automatic brain capture is paused.")
-        self.assertFalse(brain_store.auto_capture_enabled())
-        self.assertEqual(commands.brain_resume_response(), "Automatic brain capture is on.")
-        self.assertTrue(brain_store.auto_capture_enabled())
 
     def test_brain_button_lists_items(self):
         item = brain_store.save_item("Focus afternoons", "Focus block", "Keep afternoons clear", "goal", ["focus"], "text", "explicit")

@@ -6,14 +6,7 @@ import sqlite3
 
 from src.core.errors import retry_async, try_async
 from src.knowledge import brain_store
-from src.knowledge.brain_analysis import (
-    analyze_and_save_capture,
-    analyze_and_save_item,
-    contains_devanagari,
-)
-from src.knowledge.capture_planner import build_capture_plan
 from src.knowledge.constants import BRAIN_ITEM_TYPES
-from src.knowledge.public_link_reader import read_public_link
 from src.knowledge.web_research import search_web
 
 logger = logging.getLogger(__name__)
@@ -150,38 +143,24 @@ async def save_brain_item(
             and (not capture_key or not TELEGRAM_CAPTURE_KEY_PATTERN.fullmatch(capture_key))
         ):
             raise ValueError("Automatic brain capture requires a capture key.")
-        if capture_mode == "automatic" and not await asyncio.to_thread(brain_store.auto_capture_enabled):
-            return {"ok": False, "error": "Automatic brain capture is paused."}
         item_type = _text(values, "item_type").lower()
         if item_type not in ITEM_TYPES:
             raise ValueError("Unsupported brain item type.")
         source_url = values.get("source_url")
         if source_url is not None and not isinstance(source_url, str):
             raise ValueError("Source URL must be text.")
-        should_translate_automatic_capture = capture_mode == "automatic" and any(
-            contains_devanagari(_text(values, field))
-            for field in ("content", "title", "summary")
+        operation = lambda: asyncio.to_thread(
+            brain_store.save_item,
+            _text(values, "content"),
+            _text(values, "title"),
+            _text(values, "summary"),
+            item_type,
+            _tags(values),
+            "text",
+            capture_mode,
+            capture_key=capture_key,
+            source_url=source_url,
         )
-        if capture_mode == "automatic" and not should_translate_automatic_capture:
-            operation = lambda: asyncio.to_thread(
-                brain_store.save_item,
-                _text(values, "content"),
-                _text(values, "title"),
-                _text(values, "summary"),
-                item_type,
-                _tags(values),
-                "text",
-                capture_mode,
-                capture_key=capture_key,
-                source_url=source_url,
-            )
-        else:
-            operation = lambda: analyze_and_save_item(
-                _text(values, "content"), item_type, capture_mode,
-                title=_text(values, "title"), summary=_text(values, "summary"),
-                tags=_tags(values), source_type="text", capture_key=capture_key,
-                source_url=source_url,
-            )
         item = await retry_async(
             operation,
             attempts=3, retry_delay_seconds=0.1, logger=logger,
@@ -205,18 +184,16 @@ async def capture_brain_content(arguments: str) -> dict[str, object]:
         if not isinstance(raw_urls, list) or not all(isinstance(url, str) for url in raw_urls):
             raise ValueError("URLs must be a list of links.")
         urls = list(dict.fromkeys(url.strip() for url in raw_urls if url.strip()))
-        sources = await asyncio.gather(*(read_public_link(url) for url in urls))
-        capture_record = await analyze_and_save_capture(build_capture_plan(request, sources))
-        items = await asyncio.to_thread(brain_store.list_capture_items, capture_record.id)
-        unreadable = [source for source in sources if source.status == "manual_description"]
-        result: dict[str, object] = {
-            "ok": True,
-            "capture": {"id": capture_record.id, "titles": [item.title for item in items]},
-        }
-        if unreadable:
-            result["needs_description"] = True
-            result["question"] = "I couldn't read one of those links. What should I remember about it?"
-        return result
+        items = [await asyncio.to_thread(
+            brain_store.save_item, request, request[:120], request[:500], "idea", [],
+            "capture", "explicit",
+        )]
+        for url in urls:
+            items.append(await asyncio.to_thread(
+                brain_store.save_item, url, url, "Saved link", "reference", [],
+                "capture", "explicit", source_url=url,
+            ))
+        return {"ok": True, "brain_items": [{"id": item.id, "title": item.title} for item in items]}
 
     return await try_async(capture, handle_error=_async_failure)
 
@@ -228,25 +205,18 @@ async def search_saved_items(arguments: str) -> dict[str, object]:
         if item_type is not None and (not isinstance(item_type, str) or item_type not in ITEM_TYPES):
             raise ValueError("Unsupported brain item type.")
         items = await asyncio.to_thread(brain_store.search_items, _text(values, "query"), 20, item_type)
-        results = []
-        for item in items:
-            context = await asyncio.to_thread(brain_store.get_item_capture_context, item.id)
-            results.append(
-                {
-                    "id": item.id,
-                    "title": item.title,
-                    "summary": item.summary,
-                    "item_type": item.item_type,
-                    "tags": item.tags,
-                    "source_url": item.source_url,
-                    "captured_at": context["captured_at"] or item.created_at.isoformat(),
-                    "source_published_at": (
-                        item.source_published_at.isoformat() if item.source_published_at else None
-                    ),
-                    "capture_summary": context["summary"],
-                    "relations": context["relations"],
-                }
-            )
+        results = [
+            {
+                "id": item.id,
+                "title": item.title,
+                "summary": item.summary,
+                "item_type": item.item_type,
+                "tags": item.tags,
+                "source_url": item.source_url,
+                "saved_at": item.created_at.isoformat(),
+            }
+            for item in items
+        ]
         return {"ok": True, "brain_items": results}
 
     return await try_async(search, handle_error=_async_failure)

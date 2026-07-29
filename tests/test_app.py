@@ -7,9 +7,27 @@ os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from src import app
+from main import start
 
 
 class AppTests(unittest.TestCase):
+    @patch("main.asyncio.run")
+    @patch("main.run")
+    @patch("main.initialize_schema")
+    @patch("main.configure_logging")
+    @patch("main.require_valid_configuration")
+    def test_start_initializes_the_application_schema(
+        self, require_configuration, configure_logging, initialize_schema, run, asyncio_run
+    ):
+        start()
+
+        require_configuration.assert_called_once_with()
+        configure_logging.assert_called_once_with()
+        initialize_schema.assert_called_once_with()
+        run.assert_called_once_with()
+        asyncio_run.assert_called_once()
+        asyncio_run.call_args.args[0].close()
+
     @patch("src.app.MessageHandler")
     @patch("src.app.ApplicationBuilder")
     def test_create_telegram_application_registers_handlers(
@@ -31,7 +49,7 @@ class AppTests(unittest.TestCase):
         builder.read_timeout.assert_called_once_with(20)
         builder.write_timeout.assert_called_once_with(20)
         builder.pool_timeout.assert_called_once_with(5)
-        self.assertEqual(application.add_handler.call_count, 14)
+        self.assertEqual(application.add_handler.call_count, 12)
         voice_handler = next(
             call
             for call in message_handler.call_args_list

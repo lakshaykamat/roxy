@@ -16,8 +16,6 @@ logger = logging.getLogger(__name__)
 
 TASKS_BUTTON_TEXT = "📅 My tasks"
 BRAIN_BUTTON_TEXT = "🧠 My brain"
-PAUSE_BRAIN_BUTTON_TEXT = "⏸ Pause brain"
-RESUME_BRAIN_BUTTON_TEXT = "▶️ Resume brain"
 EXPORT_DATA_BUTTON_TEXT = "📦 Export my data"
 DELETE_DATA_BUTTON_TEXT = "🗑 Delete my data"
 HELP_BUTTON_TEXT = "ℹ️ Help"
@@ -30,7 +28,6 @@ def main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
             [TASKS_BUTTON_TEXT, BRAIN_BUTTON_TEXT],
-            [PAUSE_BRAIN_BUTTON_TEXT, RESUME_BRAIN_BUTTON_TEXT],
             [EXPORT_DATA_BUTTON_TEXT, DELETE_DATA_BUTTON_TEXT],
             [HELP_BUTTON_TEXT],
         ],
@@ -175,26 +172,8 @@ def brain_list_response() -> str:
     return "\n".join(lines)
 
 
-def brain_pause_response() -> str:
-    brain_store.set_auto_capture_enabled(False)
-    return "Automatic brain capture is paused."
-
-
-def brain_resume_response() -> str:
-    brain_store.set_auto_capture_enabled(True)
-    return "Automatic brain capture is on."
-
-
 async def list_brain(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(brain_list_response())
-
-
-async def brain_pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(brain_pause_response())
-
-
-async def brain_resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(brain_resume_response())
 
 
 async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -236,6 +215,6 @@ async def cancel_data_deletion(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "Use the keyboard to view tasks and saved brain items, control automatic capture, "
+        "Use the keyboard to view tasks and saved brain items, "
         "export your data, or permanently delete local data."
     )

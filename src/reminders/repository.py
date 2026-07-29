@@ -24,7 +24,7 @@ class ScheduledTask:
     completed_at: datetime | None
 
 
-Reminder = brain_store.ReminderDelivery
+Reminder = brain_store.ScheduledDelivery
 utc_now = brain_store.utc_now
 format_timestamp = brain_store.format_timestamp
 parse_timestamp = brain_store.parse_timestamp
@@ -43,7 +43,7 @@ def database_connection():
 
 def _cancel_pending_deliveries(connection, task_id: int, updated_at: str) -> None:
     connection.execute(
-        "UPDATE reminder_deliveries "
+        "UPDATE scheduled_deliveries "
         "SET status = 'failed', lease_expires_at = NULL, lease_token = NULL, updated_at = ? "
         "WHERE brain_item_id = ? AND status IN ('pending', 'leased')",
         (updated_at, task_id),
@@ -52,7 +52,7 @@ def _cancel_pending_deliveries(connection, task_id: int, updated_at: str) -> Non
 
 def _schedule_delivery(connection, task_id: int, scheduled_at: datetime, created_at: str) -> None:
     connection.execute(
-        "INSERT INTO reminder_deliveries "
+        "INSERT INTO scheduled_deliveries "
         "(brain_item_id, scheduled_at, status, created_at, updated_at) "
         "VALUES (?, ?, 'pending', ?, ?)",
         (task_id, format_timestamp(scheduled_at), created_at, created_at),
@@ -125,7 +125,7 @@ def clear_active_tasks() -> int:
     now = format_timestamp(utc_now())
     with database_connection() as connection:
         connection.execute(
-            "UPDATE reminder_deliveries "
+            "UPDATE scheduled_deliveries "
             "SET status = 'failed', lease_expires_at = NULL, lease_token = NULL, updated_at = ? "
             "WHERE status IN ('pending', 'leased') AND brain_item_id IN "
             "(SELECT id FROM brain_items WHERE item_type = 'task' AND status = 'active')",
@@ -168,11 +168,11 @@ def claim_due_reminder(now: datetime | None = None) -> Reminder | None:
     token = str(uuid.uuid4())
     with database_connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
-        connection.execute("UPDATE reminder_deliveries SET status = 'pending', lease_expires_at = NULL, lease_token = NULL, updated_at = ? WHERE status = 'leased' AND lease_expires_at <= ?", (format_timestamp(claim_time), format_timestamp(claim_time)))
-        row = connection.execute("SELECT reminder_deliveries.*, brain_items.title FROM reminder_deliveries JOIN brain_items ON brain_items.id = reminder_deliveries.brain_item_id WHERE reminder_deliveries.status = 'pending' AND reminder_deliveries.scheduled_at <= ? AND brain_items.status = 'active' ORDER BY reminder_deliveries.scheduled_at, reminder_deliveries.id LIMIT 1", (format_timestamp(claim_time),)).fetchone()
+        connection.execute("UPDATE scheduled_deliveries SET status = 'pending', lease_expires_at = NULL, lease_token = NULL, updated_at = ? WHERE status = 'leased' AND lease_expires_at <= ?", (format_timestamp(claim_time), format_timestamp(claim_time)))
+        row = connection.execute("SELECT scheduled_deliveries.*, brain_items.title FROM scheduled_deliveries JOIN brain_items ON brain_items.id = scheduled_deliveries.brain_item_id WHERE scheduled_deliveries.status = 'pending' AND scheduled_deliveries.scheduled_at <= ? AND brain_items.status = 'active' ORDER BY scheduled_deliveries.scheduled_at, scheduled_deliveries.id LIMIT 1", (format_timestamp(claim_time),)).fetchone()
         if row is None:
             return None
-        connection.execute("UPDATE reminder_deliveries SET status = 'leased', lease_expires_at = ?, attempt_count = attempt_count + 1, lease_token = ?, updated_at = ? WHERE id = ?", (format_timestamp(claim_time + config.LEASE_DURATION), token, format_timestamp(claim_time), row["id"]))
+        connection.execute("UPDATE scheduled_deliveries SET status = 'leased', lease_expires_at = ?, attempt_count = attempt_count + 1, lease_token = ?, updated_at = ? WHERE id = ?", (format_timestamp(claim_time + config.LEASE_DURATION), token, format_timestamp(claim_time), row["id"]))
     return Reminder(row["id"], row["brain_item_id"], row["title"], parse_timestamp(row["scheduled_at"]), row["attempt_count"] + 1, token)
 
 
@@ -180,11 +180,11 @@ def mark_reminder_delivered(reminder_id: int, lease_token: str, delivered_at: da
     completion = (delivered_at or utc_now()).astimezone(timezone.utc)
     with database_connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
-        delivery = connection.execute("SELECT * FROM reminder_deliveries WHERE id = ? AND status = 'leased' AND lease_token = ?", (reminder_id, lease_token)).fetchone()
+        delivery = connection.execute("SELECT * FROM scheduled_deliveries WHERE id = ? AND status = 'leased' AND lease_token = ?", (reminder_id, lease_token)).fetchone()
         if delivery is None:
             return
         task = connection.execute("SELECT * FROM brain_items WHERE id = ?", (delivery["brain_item_id"],)).fetchone()
-        connection.execute("UPDATE reminder_deliveries SET status = 'delivered', lease_expires_at = NULL, lease_token = NULL, delivered_at = ?, updated_at = ? WHERE id = ?", (format_timestamp(completion), format_timestamp(completion), reminder_id))
+        connection.execute("UPDATE scheduled_deliveries SET status = 'delivered', lease_expires_at = NULL, lease_token = NULL, delivered_at = ?, updated_at = ? WHERE id = ?", (format_timestamp(completion), format_timestamp(completion), reminder_id))
         if task["status"] != "active":
             return
         if task["recurrence_rule"]:
@@ -205,18 +205,18 @@ def mark_reminder_delivered(reminder_id: int, lease_token: str, delivered_at: da
 def record_delivery_failure(reminder_id: int, lease_token: str, error: str, retry_at: datetime | None = None) -> None:
     now = utc_now()
     with database_connection() as connection:
-        delivery = connection.execute("SELECT attempt_count FROM reminder_deliveries WHERE id = ? AND status = 'leased' AND lease_token = ?", (reminder_id, lease_token)).fetchone()
+        delivery = connection.execute("SELECT attempt_count FROM scheduled_deliveries WHERE id = ? AND status = 'leased' AND lease_token = ?", (reminder_id, lease_token)).fetchone()
         if delivery is None:
             return
         if delivery["attempt_count"] >= config.MAX_DELIVERY_ATTEMPTS:
-            connection.execute("UPDATE reminder_deliveries SET status = 'failed', lease_expires_at = NULL, lease_token = NULL, last_error = ?, updated_at = ? WHERE id = ?", (error, format_timestamp(now), reminder_id))
+            connection.execute("UPDATE scheduled_deliveries SET status = 'failed', lease_expires_at = NULL, lease_token = NULL, last_error = ?, updated_at = ? WHERE id = ?", (error, format_timestamp(now), reminder_id))
             return
-        connection.execute("UPDATE reminder_deliveries SET lease_expires_at = ?, last_error = ?, updated_at = ? WHERE id = ?", (format_timestamp((retry_at or now).astimezone(timezone.utc)), error, format_timestamp(now), reminder_id))
+        connection.execute("UPDATE scheduled_deliveries SET lease_expires_at = ?, last_error = ?, updated_at = ? WHERE id = ?", (format_timestamp((retry_at or now).astimezone(timezone.utc)), error, format_timestamp(now), reminder_id))
 
 
 def mark_reminder_failed(reminder_id: int, lease_token: str, error: str) -> None:
     with database_connection() as connection:
-        connection.execute("UPDATE reminder_deliveries SET status = 'failed', lease_expires_at = NULL, lease_token = NULL, last_error = ?, updated_at = ? WHERE id = ? AND status = 'leased' AND lease_token = ?", (error, format_timestamp(utc_now()), reminder_id, lease_token))
+        connection.execute("UPDATE scheduled_deliveries SET status = 'failed', lease_expires_at = NULL, lease_token = NULL, last_error = ?, updated_at = ? WHERE id = ? AND status = 'leased' AND lease_token = ?", (error, format_timestamp(utc_now()), reminder_id, lease_token))
 
 
 def next_occurrence(scheduled_at: datetime, timezone_name: str, recurrence: str) -> datetime:

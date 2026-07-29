@@ -37,12 +37,7 @@ def build_photo_message(
     if caption:
         content.append({"type": "text", "text": caption})
     content.append(image_part)
-    context = build_brain_context(caption)
-    messages: list[object] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-    ]
-    if context:
-        messages.append({"role": "system", "content": context})
+    messages: list[object] = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages.extend(history_before)
     messages.append({"role": "user", "content": content})
     return messages
@@ -204,10 +199,8 @@ def build_burst_messages(pending_messages: list[PendingMessage]) -> list[object]
         "This is system context, not user content. Never save it to the user's brain."
     )
 
-    context = build_brain_context(user_message)
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
-        *([{"role": "system", "content": context}] if context else []),
         *history.get_before(pending_messages[0].id),
         {"role": "system", "content": time_context},
         {"role": "user", "content": user_message},
@@ -283,9 +276,9 @@ def saved_titles_from_tool_result(name: str, result: dict[str, object]) -> list[
         if isinstance(item, dict) and isinstance(item.get("title"), str):
             return [item["title"]]
     if name == "capture_brain_content":
-        capture = result.get("capture")
-        if isinstance(capture, dict) and isinstance(capture.get("titles"), list):
-            return [title for title in capture["titles"] if isinstance(title, str)]
+        items = result.get("brain_items")
+        if isinstance(items, list):
+            return [item["title"] for item in items if isinstance(item, dict) and isinstance(item.get("title"), str)]
     return []
 
 
@@ -293,27 +286,3 @@ def append_saved_item_notice(reply: str, saved_titles: list[str]) -> str:
     if not saved_titles:
         return reply
     return f"{reply}\n\nSaved to your brain: {', '.join(dict.fromkeys(saved_titles))}."
-
-
-def build_brain_context(text: str) -> str:
-    items = brain_store.search_items(text, 8)
-    if not items:
-        return ""
-    lines = []
-    for item in items:
-        context = brain_store.get_item_capture_context(item.id)
-        details = [f"[{item.id}] {item.content}"]
-        if item.source_url:
-            details.append(f"Source: {item.source_url}")
-        captured_at = context.get("captured_at") or item.created_at.isoformat()
-        details.append(f"Captured: {captured_at}")
-        if item.source_published_at:
-            details.append(f"Published: {item.source_published_at.isoformat()}")
-        if context["summary"]:
-            details.append(f"Capture summary: {context['summary']}")
-        details.extend(
-            f"{relation['relation_type']}: {relation['explanation']}"
-            for relation in context["relations"]
-        )
-        lines.append("; ".join(details))
-    return "Relevant brain items:\n" + "\n".join(lines)

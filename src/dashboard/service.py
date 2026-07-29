@@ -32,10 +32,6 @@ def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
     ).fetchone() is not None
 
 
-def get_brain_graph_data() -> dict[str, list[dict[str, object]]]:
-    return brain_store.get_brain_graph()
-
-
 def _source_state(item: brain_store.BrainItem) -> str:
     if item.source_url and item.item_type == "reference":
         return "bookmark" if item.summary == "Saved link" else "analyzed"
@@ -46,7 +42,6 @@ def get_brain_snapshot() -> dict[str, object]:
     items = brain_store.list_recent_items(limit=100)
     records: list[dict[str, object]] = []
     for item in items:
-        context = brain_store.get_item_capture_context(item.id)
         records.append(
             {
                 "id": item.id,
@@ -56,17 +51,15 @@ def get_brain_snapshot() -> dict[str, object]:
                 "tags": item.tags,
                 "source_url": item.source_url,
                 "source_state": _source_state(item),
-                "captured_at": context["captured_at"] or item.created_at.isoformat(),
+                "captured_at": item.created_at.isoformat(),
                 "source_published_at": (
                     item.source_published_at.isoformat()
                     if item.source_published_at
                     else None
                 ),
-                "capture_summary": context["summary"],
-                "relations": context["relations"],
             }
         )
-    return {"timeline": brain_store.list_capture_timeline(limit=50), "items": records}
+    return {"items": records}
 
 
 def archive_brain_item(item_id: int) -> bool:
@@ -86,7 +79,7 @@ def get_dashboard_snapshot(now: datetime | None = None) -> dict[str, object]:
     with read_only_database_connection() as connection:
         message_exists = _table_exists(connection, "messages")
         brain_exists = _table_exists(connection, "brain_items")
-        delivery_exists = _table_exists(connection, "reminder_deliveries")
+        delivery_exists = _table_exists(connection, "scheduled_deliveries")
         message_total = (
             connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
             if message_exists else 0
@@ -117,24 +110,24 @@ def get_dashboard_snapshot(now: datetime | None = None) -> dict[str, object]:
             {"active": 0, "completed": 0, "cancelled": 0},
         ) if brain_exists else {"active": 0, "completed": 0, "cancelled": 0}
         reminder_statuses = _count_by_value(
-            connection, "SELECT status AS value, COUNT(*) AS count FROM reminder_deliveries GROUP BY status",
+            connection, "SELECT status AS value, COUNT(*) AS count FROM scheduled_deliveries GROUP BY status",
             {"pending": 0, "leased": 0, "delivered": 0, "failed": 0},
         ) if delivery_exists else {"pending": 0, "leased": 0, "delivered": 0, "failed": 0}
         overdue_pending = connection.execute(
-            "SELECT COUNT(*) FROM reminder_deliveries WHERE status = 'pending' AND scheduled_at < ?",
+            "SELECT COUNT(*) FROM scheduled_deliveries WHERE status = 'pending' AND scheduled_at < ?",
             (current_timestamp,),
         ).fetchone()[0] if delivery_exists else 0
         upcoming_rows = connection.execute(
-            "SELECT brain_items.title, reminder_deliveries.scheduled_at, brain_items.recurrence_rule "
-            "FROM reminder_deliveries JOIN brain_items ON brain_items.id = reminder_deliveries.brain_item_id "
-            "WHERE reminder_deliveries.status = 'pending' AND reminder_deliveries.scheduled_at >= ? "
-            "ORDER BY reminder_deliveries.scheduled_at, reminder_deliveries.id LIMIT 5",
+            "SELECT brain_items.title, scheduled_deliveries.scheduled_at, brain_items.recurrence_rule "
+            "FROM scheduled_deliveries JOIN brain_items ON brain_items.id = scheduled_deliveries.brain_item_id "
+            "WHERE scheduled_deliveries.status = 'pending' AND scheduled_deliveries.scheduled_at >= ? "
+            "ORDER BY scheduled_deliveries.scheduled_at, scheduled_deliveries.id LIMIT 5",
             (current_timestamp,),
         ).fetchall() if delivery_exists and brain_exists else []
         failure_rows = connection.execute(
-            "SELECT brain_items.title, reminder_deliveries.updated_at, reminder_deliveries.attempt_count, reminder_deliveries.last_error "
-            "FROM reminder_deliveries JOIN brain_items ON brain_items.id = reminder_deliveries.brain_item_id "
-            "WHERE reminder_deliveries.status = 'failed' ORDER BY reminder_deliveries.updated_at DESC, reminder_deliveries.id DESC LIMIT 5"
+            "SELECT brain_items.title, scheduled_deliveries.updated_at, scheduled_deliveries.attempt_count, scheduled_deliveries.last_error "
+            "FROM scheduled_deliveries JOIN brain_items ON brain_items.id = scheduled_deliveries.brain_item_id "
+            "WHERE scheduled_deliveries.status = 'failed' ORDER BY scheduled_deliveries.updated_at DESC, scheduled_deliveries.id DESC LIMIT 5"
         ).fetchall() if delivery_exists and brain_exists else []
 
     return {

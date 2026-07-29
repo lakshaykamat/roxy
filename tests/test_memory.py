@@ -48,4 +48,4 @@ class MemoryTests(unittest.TestCase):
 
         self.assertEqual(export["brain_items"][0]["id"], task.id)
         self.assertEqual(export["brain_items"][0]["status"], "completed")
-        self.assertEqual(export["reminder_deliveries"][0]["brain_item_id"], task.id)
+        self.assertEqual(export["scheduled_deliveries"][0]["brain_item_id"], task.id)

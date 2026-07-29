@@ -45,6 +45,15 @@ class WebResearchTests(unittest.TestCase):
         self.assertFalse(result.get("needs_description", False))
         self.assertEqual(brain_store.list_recent_items()[0].content, "save this idea")
 
+    def test_capture_preserves_request_when_urls_are_present(self):
+        asyncio.run(tools.capture_brain_content(
+            '{"request":"save this project note", "urls":["https://example.com"]}'
+        ))
+
+        contents = [item.content for item in brain_store.list_recent_items()]
+
+        self.assertCountEqual(contents, ["save this project note", "https://example.com"])
+
     def test_web_research_intent_exposes_only_web_search(self):
         self.assertEqual(
             tool_definitions_for_intent("web_research"),

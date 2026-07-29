@@ -85,37 +85,24 @@ For network access, terminate HTTPS at a reverse proxy and set
 internet over plain HTTP. The dashboard shows aggregate activity and
 operational state only; it never displays retained chat history.
 
-After signing in, open `/brain` for active Brain captures, their source links,
-and stored thought connections. Connections are shown only when Roxy has saved
-an explained relation: `same entity`, `same domain`, or `related topic
-(inferred)`. Each relation displays its direct or inferred origin and
-confidence; matching capture dates or tags alone never create a displayed
-connection. The matching authenticated JSON data is available at `/brain-data`.
+After signing in, open `/brain` for active saved items and their source links.
+The matching authenticated JSON data is available at `/brain-data`.
 
 The Brain page can archive an active item immediately. Permanent deletion
 requires an explicit in-page confirmation and the item's exact active title.
 
 ## Brain sources and research
 
-Ask Roxy to save a thought, a public link, or a list of links. Public links are
-limited to public HTTP(S) destinations, are rechecked after redirects, time out
-after 10 seconds, and are capped at 1 MiB. When a readable page cannot provide
-useful text, Roxy keeps it as a bookmark or asks for a short manual description
-instead of guessing.
+Ask Roxy to save a thought, a public link, or a list of links. Each request and
+each link are saved directly in the local Brain.
 
 You can also ask natural-language questions such as “find current SQLite FTS5
 guidance.” Roxy's web research returns cited results but does not save them
-unless you explicitly ask. Explicit saves are analyzed for concise metadata and
-safe thought connections. Automatic saves store the main chat model's metadata
-directly; relationship analysis runs only at 3:00 AM in `TASK_TIMEZONE`, when
-the reminder worker revisits recent active items and older unconnected items.
-It never creates a nightly note or sends a Telegram message for that work.
+unless you explicitly ask.
 
-Normal chat uses one model completion. A tool action, including automatic
-memory capture, uses two completions: one to request the tool and one to reply
-after its result. Multi-step tool loops use one additional completion per
-tool-result round. Roxy does not make separate intent-router, memory-classifier,
-per-message Brain-analysis, or per-message relation-analysis calls.
+Normal chat uses one model completion. A tool action uses two completions: one
+to request the tool and one to reply after its result. Multi-step tool loops use
+one additional completion per tool-result round.
 
 Health and readiness endpoints remain public for orchestration. Restrict their
 network access at your deployment boundary when appropriate.
@@ -140,19 +127,16 @@ Use `/start` once to show Roxy's persistent keyboard. After that, use its button
 | --- | --- |
 | 📅 My tasks | Lists active reminders and shows a Done button for each one. |
 | 🧠 My brain | Lists the 20 newest active brain items. |
-| ⏸ Pause brain | Pauses automatic brain capture. |
-| ▶️ Resume brain | Resumes automatic brain capture. |
-| 📦 Export my data | Sends a JSON export of local messages, brain items, settings, and reminder deliveries. |
+| 📦 Export my data | Sends a JSON export of local messages, brain items, and scheduled deliveries. |
 | 🗑 Delete my data | Opens a keyboard confirmation before permanently deleting local data. |
 | ℹ️ Help | Explains the available keyboard actions. |
 
 ## Privacy and service health
 
-Roxy automatically captures durable ideas, facts, preferences, people, projects,
-goals, decisions, references, and reflections, including sensitive durable
-facts. It does not capture casual chat, expenses alone, or content marked “don't
-save.” Brain capture is assessed independently when a message also needs another
-action. Use the Pause brain button to pause automatic capture; direct save requests
+Roxy can capture durable ideas, facts, preferences, people, projects, goals,
+decisions, references, and reflections, including sensitive durable facts. It
+does not capture casual chat, expenses alone, or content marked “don't save.”
+Direct save requests
 still work.
 Tasks are brain items, while their notification attempts are stored separately.
 `/ready` returns `503` when the bot database is unavailable; `/health` is
