@@ -62,14 +62,23 @@ class PublicLinkReaderTests(unittest.IsolatedAsyncioTestCase):
         response = httpx.Response(
             200,
             headers={"content-type": "text/html"},
-            text="<title>Roadmap</title><article>Useful text</article>",
+            text=(
+                "<html><head><title>Roadmap</title></head><body>"
+                "Intro<nav>Navigation</nav><article>Useful text</article>"
+                "<footer>Contact</footer><script>hidden()</script>"
+                "<style>.hidden {}</style><noscript>hidden fallback</noscript>"
+                "</body></html>"
+            ),
         )
         with patch("src.knowledge.public_link_reader.resolve_public_host", return_value=True), patch(
             "src.knowledge.public_link_reader.fetch", new=AsyncMock(return_value=response)
         ):
             result = await read_public_link("https://example.com")
 
-        self.assertEqual((result.title, result.text, result.status), ("Roadmap", "Useful text", "analyzed"))
+        self.assertEqual(
+            (result.title, result.text, result.status),
+            ("Roadmap", "Intro Navigation Useful text Contact", "analyzed"),
+        )
 
     async def test_http_failure_is_logged_before_requesting_a_description(self):
         response = httpx.Response(404, headers={"content-type": "text/html"})

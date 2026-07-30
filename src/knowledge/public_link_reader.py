@@ -32,9 +32,9 @@ class SourceParser(HTMLParser):
         self.title_parts: list[str] = []
         self.description: str | None = None
         self.published_at: str | None = None
-        self.article_parts: list[str] = []
+        self.body_parts: list[str] = []
         self._in_title = False
-        self._article_depth = 0
+        self._body_depth = 0
         self._ignored_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -43,8 +43,8 @@ class SourceParser(HTMLParser):
             self._ignored_depth += 1
         if tag == "title":
             self._in_title = True
-        if tag in {"article", "main"}:
-            self._article_depth += 1
+        if tag == "body":
+            self._body_depth += 1
         if tag == "meta" and attributes.get("name", "").lower() == "description":
             self.description = attributes.get("content")
         if tag == "meta" and attributes.get("property", "").lower() == "article:published_time":
@@ -55,8 +55,8 @@ class SourceParser(HTMLParser):
             self._ignored_depth -= 1
         if tag == "title":
             self._in_title = False
-        if tag in {"article", "main"} and self._article_depth:
-            self._article_depth -= 1
+        if tag == "body" and self._body_depth:
+            self._body_depth -= 1
 
     def handle_data(self, data: str) -> None:
         text = " ".join(data.split())
@@ -64,12 +64,12 @@ class SourceParser(HTMLParser):
             return
         if self._in_title:
             self.title_parts.append(text)
-        if self._article_depth:
-            self.article_parts.append(text)
+        if self._body_depth:
+            self.body_parts.append(text)
 
     def extracted(self) -> tuple[str | None, str | None, str | None]:
         title = " ".join(self.title_parts) or None
-        text = " ".join(self.article_parts) or self.description
+        text = " ".join(self.body_parts) or self.description
         return title, text, self.published_at
 
 
