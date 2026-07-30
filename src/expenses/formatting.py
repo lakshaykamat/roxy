@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from src.expenses.models import Expense
+from src.expenses.models import Expense, ExpenseAnalysis
 
 CURRENCY_SYMBOLS = {
     "INR": "₹",
@@ -92,6 +92,43 @@ def format_category_summary(
     ]
     total = sum(float(group.get("total", 0)) for group in groups)
     return f"{label}:\n\n" + "\n".join(lines) + f"\n\nTotal: {format_amount(total, currency)}"
+
+
+def format_expense_analysis(analysis: ExpenseAnalysis, currency: str, label: str) -> str:
+    heading = f"{label} analysis" if label else "Monthly expense analysis"
+    lines = [
+        heading + ":",
+        f"Total spent: {format_amount(analysis.total_expenses, currency)}",
+        f"Daily average: {format_amount(analysis.daily_average_spend, currency)}",
+    ]
+    if analysis.budget_exists:
+        lines.extend([
+            f"Budget: {format_amount(analysis.total_budget, currency)}",
+            f"Remaining budget: {format_amount(analysis.remaining_budget, currency)}",
+            f"Budget used: {analysis.budget_used_percentage:g}%",
+        ])
+    else:
+        lines.append("Your spending was analysed, but no monthly budget is set.")
+    if analysis.top_categories:
+        lines.append("\nTop categories:")
+        lines.extend(
+            f"{category.category}: {format_amount(category.amount, currency)}"
+            for category in analysis.top_categories
+        )
+    if analysis.top_expenses:
+        lines.append("\nTop expenses:")
+        lines.extend(
+            f"{expense.title}: {format_amount(expense.amount, currency)}"
+            for expense in analysis.top_expenses
+        )
+    if analysis.weekly_expenses:
+        lines.append("\nWeekly spending:")
+        lines.extend(
+            f"{_pretty_date(expense.start_date)} to {_pretty_date(expense.end_date)}: "
+            f"{format_amount(expense.amount, currency)}"
+            for expense in analysis.weekly_expenses
+        )
+    return "\n".join(lines)
 
 
 def format_updated(before: Expense, after: Expense, currency: str) -> str:

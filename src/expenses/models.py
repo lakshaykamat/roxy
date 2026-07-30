@@ -10,8 +10,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import TypeVar
 
-from src.expenses.errors import ExpenseValidationError
+from src.expenses.errors import ExpenseServiceUnavailableError, ExpenseValidationError
 
 OBJECT_ID_PATTERN = re.compile(r"^[0-9a-fA-F]{24}$")
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -23,6 +24,16 @@ DESCRIPTION_MAX = 500
 MIN_AMOUNT = 0.01
 BULK_EXPENSES_MIN = 1
 BULK_EXPENSES_MAX = 100
+BUDGET_PUBLIC_FIELDS = frozenset({"amount", "month", "totalBudget", "remainingBudget"})
+ANALYSIS_REQUIRED_FIELDS = frozenset({
+    "totalBudget",
+    "totalExpenses",
+    "remainingBudget",
+    "budgetUsedPercentage",
+    "budgetExists",
+    "dailyAverageSpend",
+})
+AnalysisItem = TypeVar("AnalysisItem", "ExpenseCategoryTotal", "TopExpense", "WeeklyExpense")
 
 # Only these fields are ever accepted from the model or sent to the API.
 WRITABLE_FIELDS = ("title", "amount", "category", "description", "date")
@@ -66,6 +77,124 @@ class Expense:
         if self.description:
             public["description"] = self.description
         return public
+
+
+@dataclass(frozen=True)
+class ExpenseCategoryTotal:
+    category: str
+    amount: float
+
+    @classmethod
+    def from_api(cls, data: dict[str, object]) -> "ExpenseCategoryTotal":
+        return cls(
+            category=str(data.get("category") or "Uncategorised"),
+            amount=_coerce_amount(data.get("amount", data.get("total", 0))),
+        )
+
+    def to_public(self) -> dict[str, object]:
+        return {"category": self.category, "amount": self.amount}
+
+
+@dataclass(frozen=True)
+class TopExpense:
+    title: str
+    amount: float
+
+    @classmethod
+    def from_api(cls, data: dict[str, object]) -> "TopExpense":
+        return cls(
+            title=str(data.get("title") or "Untitled expense"),
+            amount=_coerce_amount(data.get("amount", 0)),
+        )
+
+    def to_public(self) -> dict[str, object]:
+        return {"title": self.title, "amount": self.amount}
+
+
+@dataclass(frozen=True)
+class WeeklyExpense:
+    week: int
+    amount: float
+    start_date: str
+    end_date: str
+
+    @classmethod
+    def from_api(cls, data: dict[str, object]) -> "WeeklyExpense":
+        return cls(
+            week=int(_coerce_amount(data.get("week", 0))),
+            amount=_coerce_amount(data.get("amount", 0)),
+            start_date=_normalise_date(data.get("startDate")),
+            end_date=_normalise_date(data.get("endDate")),
+        )
+
+    def to_public(self) -> dict[str, object]:
+        return {
+            "week": self.week,
+            "amount": self.amount,
+            "startDate": self.start_date,
+            "endDate": self.end_date,
+        }
+
+
+@dataclass(frozen=True)
+class ExpenseAnalysis:
+    total_budget: float
+    total_expenses: float
+    remaining_budget: float
+    budget_used_percentage: float
+    budget_exists: bool
+    daily_average_spend: float
+    top_categories: list[ExpenseCategoryTotal]
+    top_expenses: list[TopExpense]
+    weekly_expenses: list[WeeklyExpense]
+    budget: dict[str, object] | None = None
+
+    @classmethod
+    def from_api(cls, data: dict[str, object]) -> "ExpenseAnalysis":
+        if not isinstance(data, dict) or not ANALYSIS_REQUIRED_FIELDS.issubset(data):
+            raise ExpenseServiceUnavailableError()
+        return cls(
+            total_budget=_coerce_amount(data.get("totalBudget", 0)),
+            total_expenses=_coerce_amount(data.get("totalExpenses", 0)),
+            remaining_budget=_coerce_amount(data.get("remainingBudget", 0)),
+            budget_used_percentage=_coerce_amount(data.get("budgetUsedPercentage", 0)),
+            budget_exists=data.get("budgetExists") is True,
+            daily_average_spend=_coerce_amount(data.get("dailyAverageSpend", 0)),
+            top_categories=_parse_analysis_items(data.get("topCategories"), ExpenseCategoryTotal),
+            top_expenses=_parse_analysis_items(data.get("topExpenses"), TopExpense),
+            weekly_expenses=_parse_analysis_items(data.get("weeklyExpenses"), WeeklyExpense),
+            budget=_public_budget(data.get("budget")),
+        )
+
+    def to_public(self) -> dict[str, object]:
+        public: dict[str, object] = {
+            "totalBudget": self.total_budget,
+            "totalExpenses": self.total_expenses,
+            "remainingBudget": self.remaining_budget,
+            "budgetUsedPercentage": self.budget_used_percentage,
+            "budgetExists": self.budget_exists,
+            "dailyAverageSpend": self.daily_average_spend,
+            "topCategories": [category.to_public() for category in self.top_categories],
+            "topExpenses": [expense.to_public() for expense in self.top_expenses],
+            "weeklyExpenses": [expense.to_public() for expense in self.weekly_expenses],
+        }
+        if self.budget is not None:
+            public["budget"] = self.budget
+        return public
+
+
+def _parse_analysis_items(
+    item_data: object, item_type: type[AnalysisItem]
+) -> list[AnalysisItem]:
+    if not isinstance(item_data, list):
+        return []
+    return [item_type.from_api(item) for item in item_data if isinstance(item, dict)]
+
+
+def _public_budget(data: object) -> dict[str, object] | None:
+    if not isinstance(data, dict):
+        return None
+    return {key: value for key, value in data.items() if key in BUDGET_PUBLIC_FIELDS}
 
 
 def _coerce_amount(value: object) -> float:
@@ -263,6 +392,16 @@ def build_list_params(
             raise ExpenseValidationError("The limit must be a whole number from 1 to 100.")
         params["limit"] = limit
     return params
+
+
+def build_analysis_params(month: object) -> str:
+    if (
+        not isinstance(month, str)
+        or not MONTH_PATTERN.match(month)
+        or not 1 <= int(month[5:]) <= 12
+    ):
+        raise ExpenseValidationError("Months must use YYYY-MM format.")
+    return month
 
 
 def match_expenses(expenses: list[Expense], query: dict[str, object]) -> list[Expense]:

@@ -47,7 +47,7 @@ Web research (search_web):
 
 EXPENSE_SYSTEM_PROMPT = """
 Expenses (create_expense, bulk_upsert_expenses, list_expense_categories,
-list_expenses, get_expense, update_expense, delete_expense):
+list_expenses, get_expense_analysis, get_expense, update_expense, delete_expense):
 - Use these tools only for actual money management. For an item and amount,
   create the expense immediately; ask only for a missing amount.
 - Extract title, amount, currency, category, useful description, and date.
@@ -59,6 +59,9 @@ list_expenses, get_expense, update_expense, delete_expense):
   returned category; never invent one.
 - Use bulk_upsert_expenses for multiple complete additions or ID-based updates.
   For category summaries, use group_by="category" with a concrete date range.
+- Use get_expense_analysis for monthly spending, budget, category, top-expense,
+  or weekly analysis questions. Always resolve and send a concrete YYYY-MM month,
+  using the current month when none was stated. Do not promise date-range analysis.
 - For loose updates or deletes, pass search hints. If matches are ambiguous,
   show the numbered options. Never invent an expense ID.
 - Deletion needs explicit confirmation: call delete_expense with confirmed=false,

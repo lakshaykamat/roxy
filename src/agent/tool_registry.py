@@ -30,13 +30,14 @@ TOOL_INTENTS = {
         "tool_names": frozenset({"schedule_task", "manage_reminders"}),
     },
     "expenses": {
-        "description": "Record, list, inspect, bulk-save, update, or delete personal expenses.",
+        "description": "Record, analyze, list, inspect, bulk-save, update, or delete personal expenses.",
         "tool_names": frozenset(
             {
                 "create_expense",
                 "bulk_upsert_expenses",
                 "list_expense_categories",
                 "list_expenses",
+                "get_expense_analysis",
                 "get_expense",
                 "update_expense",
                 "delete_expense",
@@ -65,6 +66,7 @@ if config.EXPENSE_TRACKER_ENABLED:
         expenses.BULK_UPSERT_DEFINITION,
         expenses.CATEGORIES_DEFINITION,
         expenses.LIST_DEFINITION,
+        expenses.ANALYSIS_DEFINITION,
         expenses.GET_DEFINITION,
         expenses.UPDATE_DEFINITION,
         expenses.DELETE_DEFINITION,
@@ -75,6 +77,7 @@ if config.EXPENSE_TRACKER_ENABLED:
             "bulk_upsert_expenses": expenses.bulk_upsert_expenses,
             "list_expense_categories": expenses.list_expense_categories,
             "list_expenses": expenses.list_expenses,
+            "get_expense_analysis": expenses.get_expense_analysis,
             "get_expense": expenses.get_expense,
             "update_expense": expenses.update_expense,
             "delete_expense": expenses.delete_expense,

@@ -15,6 +15,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from src import config
 from src.expenses import models
+from src.expenses import formatting
 from src.expenses.errors import (
     ExpenseAuthenticationError,
     ExpenseNotFoundError,
@@ -53,6 +54,24 @@ def expense_json(**overrides):
     return payload
 
 
+def analysis_json(**overrides):
+    payload = {
+        "totalBudget": 1600,
+        "totalExpenses": 950,
+        "remainingBudget": 650,
+        "budgetUsedPercentage": 59.38,
+        "budgetExists": True,
+        "dailyAverageSpend": 47.5,
+        "topCategories": [{"category": "Food", "amount": 500}],
+        "topExpenses": [{"title": "Groceries", "amount": 320}],
+        "weeklyExpenses": [
+            {"week": 30, "amount": 150, "startDate": "2026-07-20", "endDate": "2026-07-26"}
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
 def make_client(handler, api_key=API_KEY):
     return ExpenseTrackerClient(
         api_key=api_key,
@@ -84,6 +103,27 @@ class Recorder:
 
 
 class ModelTests(unittest.TestCase):
+    def test_build_analysis_params_requires_month(self):
+        with self.assertRaisesRegex(ExpenseValidationError, "YYYY-MM"):
+            models.build_analysis_params(None)
+
+    def test_build_analysis_params_rejects_invalid_month(self):
+        with self.assertRaisesRegex(ExpenseValidationError, "YYYY-MM"):
+            models.build_analysis_params("July")
+
+    def test_build_analysis_params_rejects_invalid_calendar_month(self):
+        with self.assertRaisesRegex(ExpenseValidationError, "YYYY-MM"):
+            models.build_analysis_params("2026-99")
+
+    def test_expense_analysis_drops_unknown_fields(self):
+        analysis = models.ExpenseAnalysis.from_api(
+            analysis_json(userId="private", extra="ignored", budget={"amount": 1600, "userId": "private"})
+        )
+        self.assertEqual(analysis.total_expenses, 950.0)
+        self.assertEqual(analysis.top_categories[0].category, "Food")
+        self.assertNotIn("userId", analysis.to_public())
+        self.assertNotIn("extra", analysis.to_public())
+        self.assertEqual(analysis.to_public()["budget"], {"amount": 1600})
     def test_expense_from_api_drops_internal_fields_and_normalises_date(self):
         expense = Expense.from_api(expense_json())
         public = expense.to_public()
@@ -237,6 +277,22 @@ class FormattingTests(unittest.TestCase):
         self.assertIn("Housing: ₹3,000", rendered)
         self.assertIn("Total: ₹6,580", rendered)
 
+    def test_format_expense_analysis_includes_all_available_dimensions(self):
+        analysis = models.ExpenseAnalysis.from_api(analysis_json())
+        rendered = formatting.format_expense_analysis(analysis, "INR", "July")
+        self.assertIn("July analysis", rendered)
+        self.assertIn("Total spent: ₹950", rendered)
+        self.assertIn("Daily average: ₹47.50", rendered)
+        self.assertIn("Food: ₹500", rendered)
+        self.assertIn("Groceries: ₹320", rendered)
+        self.assertIn("July 20 to July 26: ₹150", rendered)
+
+    def test_format_expense_analysis_omits_budget_when_none_exists(self):
+        analysis = models.ExpenseAnalysis.from_api(analysis_json(budgetExists=False))
+        rendered = formatting.format_expense_analysis(analysis, "INR", "July")
+        self.assertIn("spending was analysed", rendered)
+        self.assertNotIn("Remaining budget", rendered)
+
 
 # --------------------------------------------------------------------------- #
 # Relative date parsing
@@ -275,6 +331,21 @@ class DateTests(unittest.TestCase):
 
 
 class ClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_get_analysis_uses_documented_route_and_unwraps_data(self):
+        recorder = Recorder()
+        recorder.respond = lambda request: httpx.Response(200, json={"data": analysis_json()})
+        async with make_client(recorder) as client:
+            analysis = await client.get_analysis("2026-07")
+        self.assertEqual(recorder.requests[0].url.path, "/api/v1/budgets/analysis/stats")
+        self.assertEqual(recorder.requests[0].url.params["month"], "2026-07")
+        self.assertEqual(analysis.total_expenses, 950.0)
+
+    async def test_get_analysis_rejects_malformed_response(self):
+        recorder = Recorder()
+        recorder.respond = lambda request: httpx.Response(200, json={"data": []})
+        async with make_client(recorder) as client:
+            with self.assertRaises(ExpenseServiceUnavailableError):
+                await client.get_analysis("2026-07")
     async def test_create_expense_posts_body_and_parses_response(self):
         recorder = Recorder()
         recorder.respond = lambda request: httpx.Response(201, json=expense_json())
@@ -588,6 +659,44 @@ class ToolHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result["expenses"]), 1)
         self.assertIn("Dinner", result["formatted"])
 
+    async def test_get_expense_analysis_returns_formatted_public_data(self):
+        recorder = Recorder()
+        recorder.respond = lambda request: httpx.Response(200, json={"data": analysis_json()})
+        self.use_client(recorder)
+
+        result = await expenses.get_expense_analysis('{"month": "2026-07"}')
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["analysis"]["totalExpenses"], 950.0)
+        self.assertIn("Food: ₹500", result["formatted"])
+
+    async def test_get_expense_analysis_rejects_invalid_month_without_request(self):
+        recorder = Recorder()
+        self.use_client(recorder)
+
+        result = await expenses.get_expense_analysis('{"month": "July"}')
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(recorder.requests, [])
+
+    async def test_get_expense_analysis_requires_month_without_request(self):
+        recorder = Recorder()
+        self.use_client(recorder)
+
+        result = await expenses.get_expense_analysis("{}")
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(recorder.requests, [])
+
+    async def test_get_expense_analysis_returns_error_for_malformed_response(self):
+        recorder = Recorder()
+        recorder.respond = lambda request: httpx.Response(200, json={"data": []})
+        self.use_client(recorder)
+
+        result = await expenses.get_expense_analysis('{"month": "2026-07"}')
+
+        self.assertFalse(result["ok"])
+
     async def test_delete_without_confirmation_never_calls_delete(self):
         recorder = Recorder()
         recorder.respond = lambda request: httpx.Response(200, json=expense_json(title="Uber ride", amount=620))
@@ -694,7 +803,7 @@ class OptionalIntegrationTests(unittest.TestCase):
         names = [d["function"]["name"] for d in reloaded.TOOL_DEFINITIONS]
         for tool in (
             "create_expense", "bulk_upsert_expenses", "list_expense_categories",
-            "list_expenses", "delete_expense",
+            "list_expenses", "get_expense_analysis", "delete_expense",
         ):
             self.assertIn(tool, names)
             self.assertIn(tool, reloaded.TOOL_EXECUTORS)
@@ -714,6 +823,16 @@ class OptionalIntegrationTests(unittest.TestCase):
         self.assertIn("Food is for normal meals and\n  groceries", system.EXPENSE_SYSTEM_PROMPT)
         self.assertIn("Fast Food is for packaged snacks, oily food, takeaway, delivery,", system.EXPENSE_SYSTEM_PROMPT)
         self.assertIn("street food, and food eaten outside", system.EXPENSE_SYSTEM_PROMPT)
+
+    def test_expense_prompt_mentions_analysis_tool(self):
+        from src.prompts import system
+
+        self.assertIn("get_expense_analysis", system.EXPENSE_SYSTEM_PROMPT)
+
+    def test_analysis_tool_requires_month(self):
+        parameters = expenses.ANALYSIS_DEFINITION["function"]["parameters"]
+
+        self.assertIn("month", parameters["required"])
 
 
 if __name__ == "__main__":

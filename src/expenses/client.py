@@ -20,13 +20,14 @@ from src.expenses.errors import (
     ExpenseTrackerError,
     ExpenseValidationError,
 )
-from src.expenses.models import Expense, parse_expense, parse_expense_list
+from src.expenses.models import Expense, ExpenseAnalysis, parse_expense, parse_expense_list
 
 logger = logging.getLogger(__name__)
 
 API_PREFIX = "/api/v1/expenses"
 CATEGORIES_PATH = f"{API_PREFIX}/categories"
 BULK_UPSERT_PATH = f"{API_PREFIX}/bulk-upsert"
+ANALYSIS_PATH = "/api/v1/budgets/analysis/stats"
 
 
 class ExpenseTrackerClient:
@@ -101,6 +102,10 @@ class ExpenseTrackerClient:
 
     async def delete_expense(self, expense_id: str) -> None:
         await self._request("DELETE", f"{API_PREFIX}/{expense_id}")
+
+    async def get_analysis(self, month: str) -> ExpenseAnalysis:
+        data = await self._request("GET", ANALYSIS_PATH, params={"month": month})
+        return ExpenseAnalysis.from_api(_unwrap_object(data))
 
     # ---- Internals ---------------------------------------------------------
 

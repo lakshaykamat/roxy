@@ -241,6 +241,29 @@ DELETE_DEFINITION = {
     },
 }
 
+ANALYSIS_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": "get_expense_analysis",
+        "description": (
+            "Return a full monthly expense analysis including spending totals, daily average, "
+            "budget progress when a budget exists, top categories, top expenses, and weekly "
+            "spending. Use a specific YYYY-MM month when the user names one; otherwise it "
+            "defaults to the current month."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "month": {"type": "string", "description": "Month to analyze in YYYY-MM format, e.g. 2026-07."},
+                "label": {"type": "string", "description": "Optional human label, e.g. 'July'."},
+                "currency": {"type": "string", "description": "Currency code if the user named one."},
+            },
+            "required": ["month"],
+            "additionalProperties": False,
+        },
+    },
+}
+
 
 # --------------------------------------------------------------------------- #
 # Handlers
@@ -348,6 +371,22 @@ async def list_expenses(arguments: str) -> dict[str, object]:
             "ok": True,
             "expenses": [expense.to_public() for expense in expenses],
             "formatted": fmt.format_expense_list(expenses, currency, label),
+        }
+
+    return await _run(handler)
+
+
+async def get_expense_analysis(arguments: str) -> dict[str, object]:
+    async def handler() -> dict[str, object]:
+        values = _parse_arguments(arguments)
+        month = models.build_analysis_params(values.get("month"))
+        analysis = await get_client().get_analysis(month)
+        currency = _currency(values)
+        return {
+            "ok": True,
+            "month": month,
+            "analysis": analysis.to_public(),
+            "formatted": fmt.format_expense_analysis(analysis, currency, str(values.get("label") or "")),
         }
 
     return await _run(handler)
