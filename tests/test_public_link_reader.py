@@ -80,6 +80,25 @@ class PublicLinkReaderTests(unittest.IsolatedAsyncioTestCase):
             ("Roadmap", "Intro Navigation Useful text Contact", "analyzed"),
         )
 
+    async def test_successful_crawl_logs_start_and_completion_metadata(self):
+        response = httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            text="<html><head><title>Roadmap</title></head><body>Useful text</body></html>",
+        )
+        with patch("src.knowledge.public_link_reader.resolve_public_host", return_value=True), patch(
+            "src.knowledge.public_link_reader.fetch", new=AsyncMock(return_value=response)
+        ), self.assertLogs("src.knowledge.public_link_reader", level="INFO") as logs:
+            await read_public_link("https://example.com")
+
+        output = "\n".join(logs.output)
+        self.assertIn("Public link crawl started: https://example.com/", output)
+        self.assertIn(
+            "Public link crawl completed: url=https://example.com/ http_status=200 "
+            "status=analyzed text_length=11",
+            output,
+        )
+
     async def test_http_failure_is_logged_before_requesting_a_description(self):
         response = httpx.Response(404, headers={"content-type": "text/html"})
         with patch("src.knowledge.public_link_reader.resolve_public_host", return_value=True), patch(

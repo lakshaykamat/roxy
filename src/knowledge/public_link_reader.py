@@ -121,6 +121,7 @@ def _bookmark(url: str) -> CapturedSource:
 async def read_public_link(url: str) -> CapturedSource:
     async def capture() -> CapturedSource:
         current_url = normalize_public_url(url)
+        logger.info("Public link crawl started: %s", current_url)
         for _ in range(5):
             if not resolve_public_host(current_url):
                 return _bookmark(current_url)
@@ -139,6 +140,13 @@ async def read_public_link(url: str) -> CapturedSource:
             parser.feed(response.text)
             title, text, published_at = parser.extracted()
             status: CaptureStatus = "analyzed" if title or text else "manual_description"
+            logger.info(
+                "Public link crawl completed: url=%s http_status=%s status=%s text_length=%s",
+                current_url,
+                response.status_code,
+                status,
+                len(text or ""),
+            )
             return CapturedSource(current_url, title, text, published_at, status)
         logger.warning("Public link exceeded redirect limit: %s", current_url)
         return CapturedSource(current_url, None, None, None, "manual_description")
