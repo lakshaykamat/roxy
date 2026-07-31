@@ -22,7 +22,7 @@ from src.conversations import history
 from src.knowledge import recall
 from src.core.llm import ask_llm
 from src.core.transcription import transcribe_voice
-from src.knowledge.public_link_reader import read_public_link
+from src.knowledge.public_web_reader import read_public_link
 
 logger = logging.getLogger(__name__)
 FALLBACK_REPLY = "Sorry, I hit a snag. Please send that again in a moment."

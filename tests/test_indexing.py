@@ -12,7 +12,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 from src import config
 from src.knowledge import brain_store, tools
 from src.knowledge.indexing import SourceIndexer
-from src.knowledge.public_link_reader import CapturedSource
+from src.knowledge.public_web_reader import CapturedSource
 
 
 class SourceIndexerTests(unittest.IsolatedAsyncioTestCase):

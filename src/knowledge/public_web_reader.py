@@ -15,6 +15,11 @@ from src.core.web import fetch_web_response
 
 CaptureStatus = Literal["analyzed", "manual_description", "bookmark"]
 logger = logging.getLogger(__name__)
+WEB_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
 
 
 @dataclass(frozen=True)
@@ -110,7 +115,7 @@ async def fetch(url: str) -> httpx.Response:
         url,
         timeout_seconds=config.PUBLIC_SOURCE_TIMEOUT_SECONDS,
         max_bytes=config.PUBLIC_SOURCE_MAX_BYTES,
-        headers={"User-Agent": "Roxy/1.0"},
+        headers={"User-Agent": WEB_BROWSER_USER_AGENT},
     )
 
 

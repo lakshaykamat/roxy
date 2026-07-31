@@ -3,10 +3,25 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from src.knowledge.public_link_reader import read_public_link
+from src.knowledge.public_web_reader import WEB_BROWSER_USER_AGENT, read_public_link
 
 
-class PublicLinkReaderTests(unittest.IsolatedAsyncioTestCase):
+class PublicWebReaderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fetch_uses_browser_user_agent(self):
+        response = httpx.Response(200, text="<html></html>")
+        with patch(
+            "src.knowledge.public_web_reader.fetch_web_response",
+            new=AsyncMock(return_value=response),
+        ) as fetch_web_response:
+            from src.knowledge.public_web_reader import fetch
+
+            await fetch("https://example.com")
+
+        self.assertEqual(
+            fetch_web_response.await_args.kwargs["headers"],
+            {"User-Agent": WEB_BROWSER_USER_AGENT},
+        )
+
     async def test_fetch_removes_encoding_headers_after_decoding_body(self):
         class FakeResponse:
             status_code = 200
@@ -41,7 +56,7 @@ class PublicLinkReaderTests(unittest.IsolatedAsyncioTestCase):
                 return FakeStream()
 
         with patch("src.core.web.httpx.AsyncClient", FakeClient):
-            from src.knowledge.public_link_reader import fetch
+            from src.knowledge.public_web_reader import fetch
 
             result = await fetch("https://example.com")
 
@@ -50,8 +65,8 @@ class PublicLinkReaderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "<title>Roadmap</title><article>Useful text</article>")
 
     async def test_private_destination_is_not_requested(self):
-        with patch("src.knowledge.public_link_reader.resolve_public_host", return_value=False), patch(
-            "src.knowledge.public_link_reader.fetch", new=AsyncMock()
+        with patch("src.knowledge.public_web_reader.resolve_public_host", return_value=False), patch(
+            "src.knowledge.public_web_reader.fetch", new=AsyncMock()
         ) as fetch:
             result = await read_public_link("http://127.0.0.1/private")
 
@@ -70,8 +85,8 @@ class PublicLinkReaderTests(unittest.IsolatedAsyncioTestCase):
                 "</body></html>"
             ),
         )
-        with patch("src.knowledge.public_link_reader.resolve_public_host", return_value=True), patch(
-            "src.knowledge.public_link_reader.fetch", new=AsyncMock(return_value=response)
+        with patch("src.knowledge.public_web_reader.resolve_public_host", return_value=True), patch(
+            "src.knowledge.public_web_reader.fetch", new=AsyncMock(return_value=response)
         ):
             result = await read_public_link("https://example.com")
 
@@ -86,9 +101,9 @@ class PublicLinkReaderTests(unittest.IsolatedAsyncioTestCase):
             headers={"content-type": "text/html"},
             text="<html><head><title>Roadmap</title></head><body>Useful text</body></html>",
         )
-        with patch("src.knowledge.public_link_reader.resolve_public_host", return_value=True), patch(
-            "src.knowledge.public_link_reader.fetch", new=AsyncMock(return_value=response)
-        ), self.assertLogs("src.knowledge.public_link_reader", level="INFO") as logs:
+        with patch("src.knowledge.public_web_reader.resolve_public_host", return_value=True), patch(
+            "src.knowledge.public_web_reader.fetch", new=AsyncMock(return_value=response)
+        ), self.assertLogs("src.knowledge.public_web_reader", level="INFO") as logs:
             await read_public_link("https://example.com")
 
         output = "\n".join(logs.output)
@@ -101,9 +116,9 @@ class PublicLinkReaderTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_http_failure_is_logged_before_requesting_a_description(self):
         response = httpx.Response(404, headers={"content-type": "text/html"})
-        with patch("src.knowledge.public_link_reader.resolve_public_host", return_value=True), patch(
-            "src.knowledge.public_link_reader.fetch", new=AsyncMock(return_value=response)
-        ), self.assertLogs("src.knowledge.public_link_reader", level="WARNING") as logs:
+        with patch("src.knowledge.public_web_reader.resolve_public_host", return_value=True), patch(
+            "src.knowledge.public_web_reader.fetch", new=AsyncMock(return_value=response)
+        ), self.assertLogs("src.knowledge.public_web_reader", level="WARNING") as logs:
             result = await read_public_link("https://example.com/missing")
 
         self.assertEqual(result.status, "manual_description")
@@ -111,8 +126,8 @@ class PublicLinkReaderTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_redirect_destination_is_checked_before_fetching(self):
         response = httpx.Response(302, headers={"location": "http://127.0.0.1/private"})
-        with patch("src.knowledge.public_link_reader.resolve_public_host", side_effect=[True, False]), patch(
-            "src.knowledge.public_link_reader.fetch", new=AsyncMock(return_value=response)
+        with patch("src.knowledge.public_web_reader.resolve_public_host", side_effect=[True, False]), patch(
+            "src.knowledge.public_web_reader.fetch", new=AsyncMock(return_value=response)
         ) as fetch:
             result = await read_public_link("https://example.com")
 

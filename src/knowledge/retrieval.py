@@ -2,7 +2,7 @@ from collections.abc import Iterable
 
 from src.core.errors import try_catch
 from src.knowledge import brain_store
-from src.knowledge.public_link_reader import normalize_public_url
+from src.knowledge.public_web_reader import normalize_public_url
 
 MAX_RECALL_RESULTS = 5
 

@@ -3,7 +3,7 @@ import logging
 
 from src.core.errors import try_async
 from src.knowledge import brain_store
-from src.knowledge.public_link_reader import read_public_link
+from src.knowledge.public_web_reader import read_public_link
 
 logger = logging.getLogger(__name__)
 

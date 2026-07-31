@@ -16,7 +16,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 from src import config
 from src.handlers import chat
 from src.core.debounce import DebounceCoordinator, PendingMessage
-from src.knowledge.public_link_reader import CapturedSource
+from src.knowledge.public_web_reader import CapturedSource
 from src.reminders.repository import ScheduledTask
 
 
